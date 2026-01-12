@@ -1,8 +1,39 @@
 # Project Astra
 
-Astrology companion product planning and specs.
+![Astra cover](assets/cover.png)
 
-## What's inside
+![GitHub top language](https://img.shields.io/github/languages/top/zetsuchan/projectAstra)
+![GitHub language count](https://img.shields.io/github/languages/count/zetsuchan/projectAstra)
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
+![Swift](https://img.shields.io/badge/Swift-FA7343?logo=swift&logoColor=white)
+![SwiftUI](https://img.shields.io/badge/SwiftUI-0D96F6?logo=swift&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?logo=nextdotjs&logoColor=white)
+![Hono](https://img.shields.io/badge/Hono-111111?logo=cloudflare&logoColor=F38020)
+
+Astrology companion designed as a chat-first, memory-rich bestie. It combines personalized readings, a rolling diary, and a daily cultural feed so users can get perspective, track patterns, and feel seen over time.
+
+## Core experience
+- Chat-first AI astrologer that adapts to user knowledge level.
+- Rolling diary with prompts, mood tags, and optional AI reflection.
+- Daily feed with personalized transits and culture/celebrity astrology.
+- Relationship reads (boyfriend, best friend, situationship).
+- Tarot pulls for quick daily insight.
+- Prediction markets (later phase) for cultural forecasting and monetization.
+
+## Product principles
+- Progressive disclosure: start with sun sign, deepen as users opt in.
+- Memory-first: chats and diary build a long-term personal archive.
+- Aesthetic polish: typography-forward, editorial feel.
+- Privacy-aware: on-device options for iOS when possible.
+
+## Tech stack (planned)
+- Web: Next.js 16.1 + TypeScript + shadcn/ui
+- API: Hono (TypeScript)
+- Data: Convex
+- iOS: Swift 6.2.3 + SwiftUI
+- Models: provider-agnostic (OpenAI/OpenRouter + Apple Intelligence on-device)
+
+## Docs
 - `docs/product-foundation.md` — North star, positioning, tone
 - `docs/retention-loops.md` — Retention loop design
 - `docs/mvp-roadmap.md` — MVP scope and phased roadmap
