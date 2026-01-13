@@ -6,6 +6,23 @@
 
 ## Collections
 
+## Relationship Diagram
+
+```mermaid
+erDiagram
+  USERS ||--o{ CHARTS : has
+  USERS ||--o{ RELATIONSHIPS : has
+  USERS ||--o{ CHAT_THREADS : owns
+  CHAT_THREADS ||--o{ CHAT_MESSAGES : contains
+  USERS ||--o{ DIARY_ENTRIES : writes
+  USERS ||--o{ FEED_SAVES : saves
+  FEED_ITEMS ||--o{ FEED_SAVES : saved_by
+  USERS ||--o{ TAROT_PULLS : draws
+  USERS ||--o{ PROMPTS : receives
+  USERS ||--o{ MEMORIES : stores
+  RELATIONSHIPS }o--|| CHARTS : references
+```
+
 ### users
 - `user_id` (string, primary)
 - `email` (string, optional)
