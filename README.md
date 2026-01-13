@@ -47,6 +47,7 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 - `docs/daily-feed-spec.md` — Daily feed format + ranking
 - `docs/relationship-module.md` — Relationship reads + compatibility
 - `docs/tarot-spec.md` — Tarot pull scope + data model
+- `docs/convex-data-model.md` — Convex collections outline
 
 ## Local workflow notes
 Beads is used locally for issue tracking. The `.beads/` directory should stay untracked.
