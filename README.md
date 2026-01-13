@@ -48,6 +48,9 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 - `docs/relationship-module.md` — Relationship reads + compatibility
 - `docs/tarot-spec.md` — Tarot pull scope + data model
 - `docs/convex-data-model.md` — Convex collections outline
+- `docs/ai-rag-architecture.md` — AI/RAG content architecture
+- `docs/legal-privacy-checklist.md` — Legal/privacy safety checklist
+- `docs/branding-naming.md` — Branding directions + name shortlist
 
 ## Local workflow notes
 Beads is used locally for issue tracking. The `.beads/` directory should stay untracked.
