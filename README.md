@@ -51,6 +51,7 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 - `docs/ai-rag-architecture.md` — AI/RAG content architecture
 - `docs/legal-privacy-checklist.md` — Legal/privacy safety checklist
 - `docs/branding-naming.md` — Branding directions + name shortlist
+- `docs/open-questions.md` — Open questions + decisions log
 
 ## Local workflow notes
 Beads is used locally for issue tracking. The `.beads/` directory should stay untracked.
