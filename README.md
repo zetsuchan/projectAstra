@@ -42,6 +42,11 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 - `docs/ai-chat-spec.md` — AI chat behavior + memory model
 - `docs/rolling-diary-spec.md` — Diary structure + AI reflection
 - `docs/diary-cadence.md` — Prompt cadence settings
+- `docs/content-policy.md` — Tone guardrails + content safety
+- `docs/privacy-architecture.md` — Privacy model + data handling
+- `docs/daily-feed-spec.md` — Daily feed format + ranking
+- `docs/relationship-module.md` — Relationship reads + compatibility
+- `docs/tarot-spec.md` — Tarot pull scope + data model
 
 ## Local workflow notes
 Beads is used locally for issue tracking. The `.beads/` directory should stay untracked.
