@@ -36,5 +36,5 @@
 - Web: Next.js 16.1 + TypeScript.
 - API: Hono for AI routing and model abstraction.
 - Models: OpenAI / OpenRouter (cloud), Apple Intelligence + local models (iOS).
-- Data: Convex stores chat threads, messages, and summaries.
+- Data: PlanetScale for Postgres stores chat threads, messages, and summaries.
 - iOS: Swift 6.2.3 + SwiftUI.

@@ -51,5 +51,5 @@
 ## Implementation Notes
 - Web: Next.js 16.1 + TypeScript + shadcn/ui.
 - API: Hono (TypeScript) for backend endpoints.
-- Data: Convex for user profile + chart data.
+- Data: PlanetScale for Postgres for user profile + chart data.
 - iOS: Swift 6.2.3 + SwiftUI.

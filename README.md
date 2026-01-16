@@ -29,7 +29,7 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 ## Tech stack (planned)
 - Web: Next.js 16.1 + TypeScript + shadcn/ui
 - API: Hono (TypeScript)
-- Data: Convex
+- Data: PlanetScale for Postgres
 - iOS: Swift 6.2.3 + SwiftUI
 - Models: provider-agnostic (OpenAI/OpenRouter + Apple Intelligence on-device)
 
@@ -47,7 +47,7 @@ Astrology companion designed as a chat-first, memory-rich bestie. It combines pe
 - `docs/daily-feed-spec.md` — Daily feed format + ranking
 - `docs/relationship-module.md` — Relationship reads + compatibility
 - `docs/tarot-spec.md` — Tarot pull scope + data model
-- `docs/convex-data-model.md` — Convex collections outline
+- `docs/data-model.md` — Data model + schema outline
 - `docs/ai-rag-architecture.md` — AI/RAG content architecture
 - `docs/legal-privacy-checklist.md` — Legal/privacy safety checklist
 - `docs/branding-naming.md` — Branding directions + name shortlist

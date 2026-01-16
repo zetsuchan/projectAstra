@@ -12,7 +12,7 @@
 4) **Analytics/telemetry** (low sensitivity, opt-in)
 
 ## Storage
-- **Primary store:** Convex (encrypted at rest).
+- **Primary store:** PlanetScale for Postgres (encrypted at rest).
 - **Client secrets:** iOS Keychain for local tokens and encryption keys.
 - **Local-only mode (future):** optional for iOS when privacy-first.
 

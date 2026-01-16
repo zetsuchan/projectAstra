@@ -56,6 +56,6 @@
 - Reranker for KB retrieval
 
 ## Implementation Notes
-- Use Convex for storage of KB chunks + embeddings.
+- Use PlanetScale for Postgres for KB chunks; embeddings storage is TBD.
 - Retrieval pipeline lives in Hono API layer.
 - iOS on-device model uses a lighter prompt + local memory.

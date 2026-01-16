@@ -10,7 +10,7 @@ Offer a quick daily ritual that feels magical but lightweight.
 
 ## Card Data
 - Standard 78-card deck
-- Stored locally or in Convex (static data)
+- Stored locally or in PlanetScale for Postgres (static data)
 
 ## UX Flow
 1) User taps “Pull a card”

@@ -32,5 +32,5 @@
 ## Implementation Notes
 - Web: Next.js 16.1 + TypeScript + shadcn/ui.
 - API: Hono for diary endpoints.
-- Data: Convex stores entries and prompt settings.
+- Data: PlanetScale for Postgres stores entries and prompt settings.
 - iOS: Swift 6.2.3 + SwiftUI.

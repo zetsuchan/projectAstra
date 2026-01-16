@@ -37,6 +37,6 @@ Let users personalize the assistant while keeping Lumi as the default and mainta
 3) Save -> confirmation toast
 
 ## Implementation Notes
-- Store on user profile in Convex.
+- Store on user profile in PlanetScale for Postgres.
 - iOS and web should share the same style IDs.
 - The system prompt should include style tags, not raw user text.

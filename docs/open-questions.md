@@ -3,7 +3,7 @@
 ## Decisions Made
 - Assistant persona name: **Lumi**.
 - Launch: US-only.
-- Stack: Next.js 16.1 + Hono + Convex (web), Swift 6.2.3 + SwiftUI (iOS).
+- Stack: Next.js 16.1 + Hono + PlanetScale for Postgres (web), Swift 6.2.3 + SwiftUI (iOS).
 - Diary prompt cadence default: weekly.
 - Prediction markets deferred; crypto/stablecoin later.
 

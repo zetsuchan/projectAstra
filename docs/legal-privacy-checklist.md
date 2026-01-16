@@ -14,7 +14,7 @@
 - User controls for deletion (messages, diary, memory).
 
 ## Data Handling
-- Encrypt sensitive fields at rest (Convex).
+- Encrypt sensitive fields at rest (PlanetScale for Postgres).
 - Avoid logging raw chat content.
 - Use least-privilege access for internal tooling.
 

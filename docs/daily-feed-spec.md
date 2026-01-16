@@ -46,4 +46,4 @@ Make the app feel alive every day with a skimmable feed that blends personalized
 ## Implementation Notes
 - Web: Next.js 16.1 + shadcn/ui cards.
 - API: Hono feed endpoints.
-- Data: Convex collections for feed items + user saves.
+- Data: PlanetScale for Postgres tables for feed items + user saves.
