@@ -202,7 +202,7 @@ export default function ChatPage() {
                     </div>
 
                     {/* Input Area */}
-                    <div className="p-4 md:p-6 pb-8 z-20">
+                    <div className="p-4 md:p-6 pb-24 md:pb-8 z-20">
                         <div className="max-w-4xl mx-auto relative group">
                             <div className="absolute -inset-0.5 bg-gradient-to-r from-[var(--rose-400)] to-[var(--lilac-300)] rounded-full opacity-20 group-hover:opacity-40 transition duration-500 blur"></div>
                             <div className="relative flex items-center bg-[var(--bg-main)] rounded-full border border-[var(--border-color)] shadow-xl">
