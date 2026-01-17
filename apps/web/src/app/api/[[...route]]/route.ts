@@ -1,6 +1,9 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
-import type { ChatMessage, FeedItem, MarketsOverview, TrendingTopic } from '@/lib/api-types';
+import { desc, eq } from 'drizzle-orm';
+import { db } from '@/db';
+import { feedItems, predictionMarkets } from '@/db/schema';
+import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -53,26 +56,94 @@ app.get('/health', (c) => {
     return c.json({ ok: true });
 });
 
-app.get('/feed', (c) => {
-    const items: FeedItem[] = [];
-    return c.json({ items });
+app.get('/feed', async (c) => {
+    const items = await db
+        .select()
+        .from(feedItems)
+        .orderBy(desc(feedItems.createdAt))
+        .limit(20);
+
+    return c.json({
+        items: items.map((item) => ({
+            id: item.feedId,
+            type: item.type,
+            title: item.title,
+            body: item.body,
+            tags: item.tags,
+            source: item.source,
+            createdAt: item.createdAt.toISOString(),
+        })),
+    });
 });
 
-app.get('/feed/trending', (c) => {
-    const topics: TrendingTopic[] = [];
+app.get('/feed/trending', async (c) => {
+    // Extract unique tags from recent feed items as trending topics
+    const recentItems = await db
+        .select()
+        .from(feedItems)
+        .orderBy(desc(feedItems.createdAt))
+        .limit(10);
+
+    const tagCounts = new Map<string, number>();
+    for (const item of recentItems) {
+        const tags = item.tags as string[] | null;
+        if (tags) {
+            for (const tag of tags) {
+                tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+            }
+        }
+    }
+
+    const topics: TrendingTopic[] = Array.from(tagCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([tag, count]) => ({ tag, count }));
+
     return c.json({ topics });
 });
 
-app.get('/markets/overview', (c) => {
+app.get('/markets/overview', async (c) => {
+    const markets = await db
+        .select()
+        .from(predictionMarkets)
+        .orderBy(desc(predictionMarkets.createdAt));
+
+    const featured = markets.find((m) => m.featured);
+    const active = markets.filter((m) => !m.resolved);
+
+    const formatMarket = (m: typeof markets[0]) => ({
+        id: m.marketId,
+        question: m.question,
+        category: m.category,
+        yesPercent: m.yesPercent,
+        noPercent: m.noPercent,
+        volume: formatVolume(m.volumeCents),
+        endsAt: m.endsAt.toISOString(),
+        featured: m.featured,
+        astroTags: m.astroTags,
+    });
+
     const overview: MarketsOverview = {
-        featured: null,
-        active: [],
-        positions: [],
-        balanceCents: null,
+        featured: featured ? formatMarket(featured) : null,
+        active: active.map(formatMarket),
+        positions: [], // TODO: user positions when auth is added
+        balanceCents: null, // TODO: user balance when auth is added
     };
 
     return c.json(overview);
 });
+
+function formatVolume(cents: string): string {
+    const num = parseInt(cents, 10);
+    const dollars = num / 100;
+    if (dollars >= 1_000_000) {
+        return `$${(dollars / 1_000_000).toFixed(1)}M`;
+    }
+    if (dollars >= 1_000) {
+        return `$${Math.round(dollars / 1_000)}k`;
+    }
+    return `$${Math.round(dollars)}`;
+}
 
 app.get('/chat/threads/:threadId/messages', (c) => {
     const messages: ChatMessage[] = [];
