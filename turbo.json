@@ -11,6 +11,11 @@
             "outputs": [
                 ".next/**",
                 "!.next/cache/**"
+            ],
+            "env": [
+                "DATABASE_URL",
+                "OPENROUTER_API_KEY",
+                "OPENROUTER_MODEL"
             ]
         },
         "lint": {
