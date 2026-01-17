@@ -1,5 +1,7 @@
 # Agent Instructions
 
+This project uses **bun** instead of npm. Use `bun run` and `bun install` for all commands.
+
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
 ## Quick Reference

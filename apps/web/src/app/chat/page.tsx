@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Sparkles, Sun, Moon, Zap, BookOpen, Clock, Send } from 'lucide-react';
 import Link from 'next/link';
+import { usePrivy } from '@privy-io/react-auth';
 import { OrbitVisual } from '@/components/ui/orbit-visual';
 import type { ChatMessage } from '@/lib/api-types';
 import { DEFAULT_THREAD_ID, fetchChatMessages, sendChatMessage } from '@/lib/api-client';
@@ -14,6 +15,7 @@ interface ChatPageProps {
 }
 
 export default function ChatPage() {
+    const { ready, authenticated, user, login, logout } = usePrivy();
     // Local theme state for now, ideally this moves to a Context
     const [theme, setTheme] = useState('dark');
     const toggleTheme = () => {
@@ -110,13 +112,34 @@ export default function ChatPage() {
                     </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex items-center gap-3">
                     <button
                         onClick={toggleTheme}
                         className="p-2 rounded-full hover:bg-[var(--bg-card-hover)] transition-colors text-[var(--text-main)]"
                     >
                         {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
                     </button>
+                    {authenticated && user ? (
+                        <div className="hidden md:flex items-center gap-3">
+                            <span className="text-xs text-[var(--text-muted)] max-w-[120px] truncate">
+                                {user.email?.address ?? (user.wallet?.address ? `${user.wallet.address.slice(0, 4)}...${user.wallet.address.slice(-4)}` : 'Connected')}
+                            </span>
+                            <button
+                                onClick={() => logout()}
+                                className="px-4 py-1.5 border border-[var(--border-color)] rounded-full text-xs uppercase tracking-widest hover:bg-[var(--text-main)] hover:text-[var(--bg-main)] transition-all"
+                            >
+                                Sign Out
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => login()}
+                            disabled={!ready}
+                            className="hidden md:block px-4 py-1.5 border border-[var(--border-color)] rounded-full text-xs uppercase tracking-widest hover:bg-[var(--text-main)] hover:text-[var(--bg-main)] transition-all disabled:opacity-50"
+                        >
+                            {!ready ? 'Loading...' : 'Sign In'}
+                        </button>
+                    )}
                 </div>
             </header>
 

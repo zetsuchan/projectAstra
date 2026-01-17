@@ -4,6 +4,8 @@ import { desc, eq } from 'drizzle-orm';
 import { db } from '@/db';
 import { feedItems, predictionMarkets } from '@/db/schema';
 import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
+import { buildUserContextPrompt } from '@/lib/context-builder';
+import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -23,7 +25,10 @@ const getOpenRouterHeaders = () => {
     };
 };
 
-const requestAssistantReply = async (content: string) => {
+type MessageRole = 'system' | 'user' | 'assistant';
+type Message = { role: MessageRole; content: string };
+
+const requestAssistantReply = async (messages: Message[]) => {
     const headers = getOpenRouterHeaders();
     if (!headers) {
         return { error: 'missing_openrouter_key' } as const;
@@ -34,7 +39,7 @@ const requestAssistantReply = async (content: string) => {
         headers,
         body: JSON.stringify({
             model: process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-            messages: [{ role: 'user', content }],
+            messages,
         }),
     });
 
@@ -163,7 +168,7 @@ app.get('/chat/threads/:threadId/messages', (c) => {
 });
 
 app.post('/chat/threads/:threadId/messages', async (c) => {
-    let payload: { content?: string } | null = null;
+    let payload: { content?: string; userId?: string } | null = null;
 
     try {
         payload = await c.req.json();
@@ -175,15 +180,32 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
         return c.json({ error: 'content_required' }, 400);
     }
 
+    const threadId = c.req.param('threadId');
     const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
-        threadId: c.req.param('threadId'),
+        threadId,
         role: 'user',
         content: payload.content.trim(),
         createdAt: new Date().toISOString(),
     };
 
-    const assistantReply = await requestAssistantReply(userMessage.content);
+    // Build message array with system prompt and user context
+    const messages: Message[] = [
+        { role: 'system', content: LUMI_SYSTEM_PROMPT },
+    ];
+
+    // Add user-specific context if userId provided (will come from auth later)
+    if (payload.userId) {
+        const userContext = await buildUserContextPrompt(payload.userId, threadId);
+        if (userContext) {
+            messages.push({ role: 'system', content: userContext });
+        }
+    }
+
+    // Add the user's message
+    messages.push({ role: 'user', content: userMessage.content });
+
+    const assistantReply = await requestAssistantReply(messages);
 
     if ('error' in assistantReply) {
         return c.json({ error: assistantReply.error }, 502);

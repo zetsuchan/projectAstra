@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Inter, Playfair_Display } from 'next/font/google';
 import './globals.css';
 import { MobileNav } from '@/components/layout/nav-bar';
+import { PrivyProvider } from '@/components/providers/privy-provider';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -28,9 +29,11 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${inter.variable} ${playfair.variable}`}>
       <body className="antialiased font-sans bg-[var(--bg-main)] text-[var(--text-main)] overflow-x-hidden selection:bg-[var(--rose-900)] selection:text-white">
-        <div className="grain" />
-        {children}
-        <MobileNav />
+        <PrivyProvider>
+          <div className="grain" />
+          {children}
+          <MobileNav />
+        </PrivyProvider>
       </body>
     </html>
   );
