@@ -97,7 +97,7 @@ app.get('/feed/trending', async (c) => {
     const topics: TrendingTopic[] = Array.from(tagCounts.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
-        .map(([tag, count]) => ({ tag, count }));
+        .map(([tag, count]) => ({ id: tag, label: `#${tag}`, volume: count }));
 
     return c.json({ topics });
 });
@@ -114,13 +114,11 @@ app.get('/markets/overview', async (c) => {
     const formatMarket = (m: typeof markets[0]) => ({
         id: m.marketId,
         question: m.question,
-        category: m.category,
-        yesPercent: m.yesPercent,
-        noPercent: m.noPercent,
         volume: formatVolume(m.volumeCents),
-        endsAt: m.endsAt.toISOString(),
-        featured: m.featured,
-        astroTags: m.astroTags,
+        yes: parseInt(m.yesPercent, 10),
+        no: parseInt(m.noPercent, 10),
+        endsIn: formatEndsIn(m.endsAt),
+        hot: parseInt(m.volumeCents, 10) > 10_000_000, // > $100k volume
     });
 
     const overview: MarketsOverview = {
@@ -143,6 +141,20 @@ function formatVolume(cents: string): string {
         return `$${Math.round(dollars / 1_000)}k`;
     }
     return `$${Math.round(dollars)}`;
+}
+
+function formatEndsIn(date: Date): string {
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    if (diffMs <= 0) return 'Ended';
+
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+
+    if (days > 0) {
+        return `${days}D ${hours}H`;
+    }
+    return `${hours}H`;
 }
 
 app.get('/chat/threads/:threadId/messages', (c) => {
