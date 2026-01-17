@@ -8,6 +8,8 @@ import {
   boolean,
   jsonb,
   index,
+  bigint,
+  integer,
 } from 'drizzle-orm/pg-core';
 
 // ============================================================================
@@ -15,13 +17,20 @@ import {
 // ============================================================================
 export const users = pgTable('users', {
   userId: uuid('user_id').primaryKey().defaultRandom(),
+  privyId: text('privy_id').unique(), // Links Privy auth to our user
   email: text('email'),
+  walletAddress: text('wallet_address'), // Primary Solana wallet
   createdAt: timestamp('created_at').defaultNow().notNull(),
   timezone: text('timezone'),
   personaName: text('persona_name'),
   personaStyle: text('persona_style'),
   diaryCadence: text('diary_cadence').$type<'daily' | 'weekly' | 'off'>(),
+  onboardingCompleted: boolean('onboarding_completed').default(false),
   settings: jsonb('settings').$type<{ privacyToggles?: Record<string, boolean> }>(),
+  // Points system (cached balance for performance)
+  pointsBalance: integer('points_balance').default(0).notNull(),
+  pointsUpdatedAt: timestamp('points_updated_at').defaultNow(),
+  dailyBonusLastClaimedAt: timestamp('daily_bonus_last_claimed_at'),
 });
 
 // ============================================================================
@@ -185,4 +194,104 @@ export const predictionMarkets = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [index('prediction_markets_category_idx').on(table.category)]
+);
+
+// ============================================================================
+// MARKET POSITIONS (User bets on prediction markets)
+// ============================================================================
+export const marketPositions = pgTable(
+  'market_positions',
+  {
+    positionId: uuid('position_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    marketId: uuid('market_id').references(() => predictionMarkets.marketId).notNull(),
+    side: text('side').$type<'yes' | 'no'>().notNull(),
+    amountLamports: bigint('amount_lamports', { mode: 'number' }), // SOL amount (1 SOL = 1B lamports)
+    amountPoints: integer('amount_points'), // Points amount (alternative to SOL)
+    shares: integer('shares').notNull(), // Number of shares purchased
+    avgPrice: integer('avg_price_cents').notNull(), // Average price paid per share in cents
+    txSignature: text('tx_signature'), // Solana transaction signature
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('market_positions_user_idx').on(table.userId),
+    index('market_positions_market_idx').on(table.marketId),
+  ]
+);
+
+// ============================================================================
+// POINT TRANSACTIONS (Append-only ledger for audit trail)
+// ============================================================================
+export const pointTransactions = pgTable(
+  'point_transactions',
+  {
+    transactionId: uuid('transaction_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    // Core transaction data
+    amount: integer('amount').notNull(), // Positive for credits, negative for debits
+    type: text('type').$type<
+      'signup_bonus' |
+      'daily_bonus' |
+      'market_win' |
+      'market_bet' |
+      'referral_bonus' |
+      'transfer_in' |
+      'transfer_out' |
+      'admin_adjustment'
+    >().notNull(),
+    // Snapshot of balance after this transaction
+    balanceAfter: integer('balance_after').notNull(),
+    // Details
+    description: text('description'),
+    metadata: jsonb('metadata').$type<{
+      marketId?: string;
+      toUserId?: string;
+      fromUserId?: string;
+      relatedTransactionId?: string;
+      ipAddress?: string;
+      adminUserId?: string;
+    }>(),
+    // Idempotency (prevents duplicate transactions on retry)
+    idempotencyKey: text('idempotency_key').unique(),
+    // Audit trail
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    // Reversal support (never delete, only reverse)
+    reversedAt: timestamp('reversed_at'),
+    reversalTransactionId: uuid('reversal_transaction_id'),
+  },
+  (table) => [
+    index('point_tx_user_created_idx').on(table.userId, table.createdAt),
+    index('point_tx_type_idx').on(table.type),
+    index('point_tx_idempotency_idx').on(table.idempotencyKey),
+  ]
+);
+
+// ============================================================================
+// FRAUD ATTEMPTS (Logging for security analysis)
+// ============================================================================
+export const fraudAttempts = pgTable(
+  'fraud_attempts',
+  {
+    attemptId: uuid('attempt_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    reason: text('reason').$type<
+      'rate_limit_exceeded' |
+      'multi_accounting_suspected' |
+      'unusual_amount' |
+      'insufficient_balance' |
+      'suspicious_pattern'
+    >().notNull(),
+    action: text('action').notNull(), // What they tried to do
+    metadata: jsonb('metadata').$type<{
+      ipAddress?: string;
+      userAgent?: string;
+      amount?: number;
+      relatedUserIds?: string[];
+    }>(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('fraud_attempts_user_idx').on(table.userId),
+    index('fraud_attempts_created_idx').on(table.createdAt),
+  ]
 );

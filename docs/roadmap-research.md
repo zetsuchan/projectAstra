@@ -175,3 +175,63 @@ Last updated: Jan 16, 2026
 - Current setup: Single PlanetScale database for both local dev and Vercel production
 - Target: Have core features testable with auth by next Sunday
 - Priority: Database schema and relationships need most thinking
+
+---
+
+## Research: Airdrop Points Program
+
+*Researched Jan 17, 2026 - saved for future implementation*
+
+### Overview
+Points-to-airdrop model (like Blur, Jupiter, Hyperliquid) where users earn points through activity that later convert to tokens.
+
+### Key Examples Studied
+- **Blur**: Listing + bid + lending points, loyalty bonuses, care packages
+- **Jupiter**: $800 min volume → 50 JUP minimum, activity bonuses
+- **Hyperliquid**: 700K points/week, time-weighted, opaque conversion = "most successful airdrop"
+- **LayerZero**: Sybil resistance via self-reporting (15% allocation), bounties
+
+### Point-Earning Activities (for prediction markets)
+| Activity | Points | Notes |
+|----------|--------|-------|
+| Betting volume | $1 = 1 point/day | While position open (time-weighted) |
+| Winning prediction | Bonus pool | Split among winners per market |
+| Market creation | 50 base | + creator tier multiplier (2-6x) |
+| Daily check-in | 10 points | + streak bonus |
+| Referrals | 10% of referee | For 90 days |
+
+### Multipliers
+- **Winning streak**: 1.5x at 3 days, 2x at 7 days
+- **Creator tier**: 2x (10+ markets), 4x (50+ markets), 6x (100+ markets)
+- **Low-liquidity markets**: 1.5x (incentivize new markets)
+
+### Anti-Gaming (Critical)
+- Minimum $5 bet size for points
+- Wash trading detection (opposite bets from same wallet cluster)
+- IP/device fingerprinting
+- Flag abnormal win rates (>75%)
+- Withdrawal penalty: -50% if immediate withdrawal after bet
+
+### Seasonal Structure
+- **Season 1** (3mo): 500K points/week, 10% token supply, focus on creation
+- **Season 2** (3mo): 750K points/week, 15% token supply, balanced
+- Keep conversion ratio secret until end
+- Publish weekly merkle roots for transparency
+
+### Token Conversion
+- Set meaningful minimums (50+ tokens, ~$100-500 value)
+- Tiered distribution with bonuses at higher tiers
+- 2-week sybil analysis before claiming
+- Vesting optional: 30% immediate, 70% over 6 months
+
+### Technical Notes
+- Off-chain tracking (DB) + on-chain verification (merkle roots)
+- Calculate daily at consistent timestamps
+- Background jobs for batch calculations
+- Real-time dashboard for user visibility
+
+### Sources
+- [Hyperliquid Points Docs](https://hyperliquid.gitbook.io/hyperliquid-docs/points)
+- [Jupiter Airdrop Analysis](https://www.coingecko.com/learn/everything-you-need-to-know-jupiter-s-upcoming-airdrop-jupuary)
+- [LayerZero Sybil Resistance](https://cointelegraph.com/news/tensions-defi-layerzero-sybil)
+- [Points-Based Distribution in Web3](https://defiprime.com/points-based-token-distribution-programs-web3)
