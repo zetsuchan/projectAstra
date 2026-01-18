@@ -20,26 +20,22 @@ export type AuthUser = {
 /**
  * Hook to get current authenticated user.
  * Returns null if not authenticated or Privy not configured.
+ *
+ * IMPORTANT: This hook must be used inside PrivyProvider.
+ * Hooks are called unconditionally to comply with React's Rules of Hooks.
  */
 export function useAuth() {
-    // Will throw if used outside PrivyProvider, but we handle missing config gracefully
-    let privyData: ReturnType<typeof usePrivy> | null = null;
-    let walletsData: ReturnType<typeof useWallets> | null = null;
-
-    try {
-        privyData = usePrivy();
-        walletsData = useWallets();
-    } catch {
-        // Privy not configured
-    }
+    // Hooks must be called unconditionally to maintain consistent hook order
+    const privyData = usePrivy();
+    const walletsData = useWallets();
 
     const user = useMemo((): AuthUser | null => {
-        if (!privyData?.ready || !privyData?.authenticated || !privyData?.user) {
+        if (!privyData.ready || !privyData.authenticated || !privyData.user) {
             return null;
         }
 
         const { user: privyUser } = privyData;
-        const wallets = walletsData?.wallets ?? [];
+        const wallets = walletsData.wallets ?? [];
 
         // Get first available wallet
         const primaryWallet = wallets[0];
@@ -50,33 +46,30 @@ export function useAuth() {
             wallet: primaryWallet?.address ?? null,
             isAuthenticated: true,
         };
-    }, [privyData?.ready, privyData?.authenticated, privyData?.user, walletsData?.wallets]);
+    }, [privyData.ready, privyData.authenticated, privyData.user, walletsData.wallets]);
 
     return {
         user,
-        isLoading: privyData ? !privyData.ready : false,
+        isLoading: !privyData.ready,
         isAuthenticated: !!user,
-        login: privyData?.login ?? (() => {}),
-        logout: privyData?.logout ?? (() => {}),
+        login: privyData.login,
+        logout: privyData.logout,
     };
 }
 
 /**
  * Hook to get user's wallet for transactions.
+ *
+ * IMPORTANT: This hook must be used inside PrivyProvider.
  */
 export function useWallet() {
-    let walletsData: ReturnType<typeof useWallets> | null = null;
-
-    try {
-        walletsData = useWallets();
-    } catch {
-        // Privy not configured
-    }
+    // Hooks must be called unconditionally to maintain consistent hook order
+    const walletsData = useWallets();
 
     const wallet = useMemo(() => {
-        if (!walletsData?.wallets) return null;
+        if (!walletsData.wallets) return null;
         return walletsData.wallets[0] ?? null;
-    }, [walletsData?.wallets]);
+    }, [walletsData.wallets]);
 
     return {
         wallet,

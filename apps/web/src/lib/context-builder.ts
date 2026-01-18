@@ -1,6 +1,6 @@
 import { db } from '@/db';
 import { users, charts, relationships, diaryEntries, chatThreads } from '@/db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 
 export type UserContext = {
     user: typeof users.$inferSelect | null;
@@ -25,7 +25,9 @@ export async function loadUserContext(userId: string, threadId?: string): Promis
             .orderBy(desc(diaryEntries.createdAt))
             .limit(3), // Last 3 diary entries for recent context
         threadId
-            ? db.select().from(chatThreads).where(eq(chatThreads.threadId, threadId)).limit(1)
+            ? db.select().from(chatThreads).where(
+                and(eq(chatThreads.threadId, threadId), eq(chatThreads.userId, userId))
+              ).limit(1)
             : Promise.resolve([]),
     ]);
 

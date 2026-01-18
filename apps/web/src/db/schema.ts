@@ -206,7 +206,7 @@ export const marketPositions = pgTable(
     userId: uuid('user_id').references(() => users.userId).notNull(),
     marketId: uuid('market_id').references(() => predictionMarkets.marketId).notNull(),
     side: text('side').$type<'yes' | 'no'>().notNull(),
-    amountLamports: bigint('amount_lamports', { mode: 'number' }), // SOL amount (1 SOL = 1B lamports)
+    amountLamports: bigint('amount_lamports', { mode: 'bigint' }), // SOL amount (1 SOL = 1B lamports)
     amountPoints: integer('amount_points'), // Points amount (alternative to SOL)
     shares: integer('shares').notNull(), // Number of shares purchased
     avgPrice: integer('avg_price_cents').notNull(), // Average price paid per share in cents
@@ -262,7 +262,7 @@ export const pointTransactions = pgTable(
   (table) => [
     index('point_tx_user_created_idx').on(table.userId, table.createdAt),
     index('point_tx_type_idx').on(table.type),
-    index('point_tx_idempotency_idx').on(table.idempotencyKey),
+    // Note: idempotency_key already has a unique constraint which creates a backing index
   ]
 );
 

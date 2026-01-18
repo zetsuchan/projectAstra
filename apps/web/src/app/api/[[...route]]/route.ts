@@ -1,11 +1,12 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, and } from 'drizzle-orm';
 import { db } from '@/db';
-import { feedItems, predictionMarkets } from '@/db/schema';
+import { feedItems, predictionMarkets, chatThreads } from '@/db/schema';
 import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
 import { buildUserContextPrompt } from '@/lib/context-builder';
 import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
+import { verifyAuthToken, type AuthenticatedUser } from '@/lib/auth-server';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -168,7 +169,10 @@ app.get('/chat/threads/:threadId/messages', (c) => {
 });
 
 app.post('/chat/threads/:threadId/messages', async (c) => {
-    let payload: { content?: string; userId?: string } | null = null;
+    // Authenticate user from token - NEVER trust userId from request body
+    const authUser = await verifyAuthToken(c.req.raw);
+
+    let payload: { content?: string } | null = null;
 
     try {
         payload = await c.req.json();
@@ -181,6 +185,24 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
     }
 
     const threadId = c.req.param('threadId');
+
+    // Verify thread belongs to authenticated user (if authenticated)
+    if (authUser) {
+        const thread = await db
+            .select({ userId: chatThreads.userId })
+            .from(chatThreads)
+            .where(and(
+                eq(chatThreads.threadId, threadId),
+                eq(chatThreads.userId, authUser.userId)
+            ))
+            .limit(1);
+
+        if (thread.length === 0) {
+            // Thread doesn't exist or doesn't belong to this user
+            return c.json({ error: 'thread_not_found' }, 404);
+        }
+    }
+
     const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
         threadId,
@@ -194,9 +216,9 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
         { role: 'system', content: LUMI_SYSTEM_PROMPT },
     ];
 
-    // Add user-specific context if userId provided (will come from auth later)
-    if (payload.userId) {
-        const userContext = await buildUserContextPrompt(payload.userId, threadId);
+    // Add user-specific context only for authenticated users
+    if (authUser) {
+        const userContext = await buildUserContextPrompt(authUser.userId, threadId);
         if (userContext) {
             messages.push({ role: 'system', content: userContext });
         }

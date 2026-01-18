@@ -27,6 +27,8 @@ export type PointTransactionType =
   | 'transfer_out'
   | 'admin_adjustment';
 
+type DbTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
 interface TransactionParams {
   userId: string;
   amount: number;
@@ -41,6 +43,8 @@ interface TransactionParams {
     ipAddress?: string;
     adminUserId?: string;
   };
+  // Optional: pass an existing transaction to use instead of creating a new one
+  tx?: DbTransaction;
 }
 
 interface TransferParams {
@@ -71,67 +75,79 @@ export const POINTS_CONFIG = {
 
 /**
  * Award points to a user (credits their balance)
+ * If tx is provided, uses that transaction instead of creating a new one.
  */
 export async function awardPoints(params: TransactionParams): Promise<{ success: boolean; transaction?: any; error?: string }> {
-  const { userId, amount, type, description, idempotencyKey, metadata } = params;
+  const { userId, amount, type, description, idempotencyKey, metadata, tx: existingTx } = params;
 
   // Validate
   if (amount <= 0) {
     return { success: false, error: 'Amount must be positive' };
   }
 
-  try {
-    // Check idempotency - return existing if already processed
-    const existing = await db.query.pointTransactions.findFirst({
+  // Core logic that runs within a transaction context
+  const executeAward = async (tx: DbTransaction) => {
+    // Check idempotency within the transaction
+    const existing = await tx.query.pointTransactions.findFirst({
       where: eq(pointTransactions.idempotencyKey, idempotencyKey),
     });
 
     if (existing) {
-      return { success: true, transaction: existing };
+      return { alreadyProcessed: true, transaction: existing };
     }
 
-    // Execute transaction
+    // Get current balance with row lock
+    const [user] = await tx
+      .select({ pointsBalance: users.pointsBalance })
+      .from(users)
+      .where(eq(users.userId, userId))
+      .for('update');
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    const newBalance = user.pointsBalance + amount;
+
+    // Insert ledger entry
+    const [transaction] = await tx
+      .insert(pointTransactions)
+      .values({
+        userId,
+        amount,
+        type,
+        balanceAfter: newBalance,
+        description,
+        metadata,
+        idempotencyKey,
+      })
+      .returning();
+
+    // Update cached balance
+    await tx
+      .update(users)
+      .set({
+        pointsBalance: newBalance,
+        pointsUpdatedAt: new Date(),
+      })
+      .where(eq(users.userId, userId));
+
+    return { alreadyProcessed: false, transaction };
+  };
+
+  try {
+    // If an existing transaction was provided, use it directly
+    if (existingTx) {
+      const result = await executeAward(existingTx);
+      return { success: true, transaction: result.transaction };
+    }
+
+    // Otherwise create a new transaction
     const result = await db.transaction(async (tx) => {
-      // Get current balance with row lock
-      const [user] = await tx
-        .select({ pointsBalance: users.pointsBalance })
-        .from(users)
-        .where(eq(users.userId, userId))
-        .for('update');
-
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      const newBalance = user.pointsBalance + amount;
-
-      // Insert ledger entry
-      const [transaction] = await tx
-        .insert(pointTransactions)
-        .values({
-          userId,
-          amount,
-          type,
-          balanceAfter: newBalance,
-          description,
-          metadata,
-          idempotencyKey,
-        })
-        .returning();
-
-      // Update cached balance
-      await tx
-        .update(users)
-        .set({
-          pointsBalance: newBalance,
-          pointsUpdatedAt: new Date(),
-        })
-        .where(eq(users.userId, userId));
-
-      return transaction;
+      return executeAward(tx);
     });
 
-    return { success: true, transaction: result };
+    return { success: true, transaction: result.transaction };
   } catch (error) {
     console.error('[Points] Award error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -140,79 +156,91 @@ export async function awardPoints(params: TransactionParams): Promise<{ success:
 
 /**
  * Deduct points from a user (debits their balance)
+ * If tx is provided, uses that transaction instead of creating a new one.
  */
 export async function deductPoints(params: TransactionParams): Promise<{ success: boolean; transaction?: any; error?: string }> {
-  const { userId, amount, type, description, idempotencyKey, metadata } = params;
+  const { userId, amount, type, description, idempotencyKey, metadata, tx: existingTx } = params;
 
   // Validate
   if (amount <= 0) {
     return { success: false, error: 'Amount must be positive' };
   }
 
-  try {
-    // Check idempotency
-    const existing = await db.query.pointTransactions.findFirst({
+  // Core logic that runs within a transaction context
+  const executeDeduct = async (tx: DbTransaction) => {
+    // Check idempotency within the transaction
+    const existing = await tx.query.pointTransactions.findFirst({
       where: eq(pointTransactions.idempotencyKey, idempotencyKey),
     });
 
     if (existing) {
-      return { success: true, transaction: existing };
+      return { alreadyProcessed: true, transaction: existing };
     }
 
-    // Execute transaction
+    // Get current balance with row lock
+    const [user] = await tx
+      .select({ pointsBalance: users.pointsBalance })
+      .from(users)
+      .where(eq(users.userId, userId))
+      .for('update');
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Check sufficient balance
+    if (user.pointsBalance < amount) {
+      // Log fraud attempt
+      await tx.insert(fraudAttempts).values({
+        userId,
+        reason: 'insufficient_balance',
+        action: `Attempted to deduct ${amount} points`,
+        metadata: { amount },
+      });
+      throw new Error('Insufficient balance');
+    }
+
+    const newBalance = user.pointsBalance - amount;
+
+    // Insert ledger entry (negative amount for debit)
+    const [transaction] = await tx
+      .insert(pointTransactions)
+      .values({
+        userId,
+        amount: -amount, // Negative for deduction
+        type,
+        balanceAfter: newBalance,
+        description,
+        metadata,
+        idempotencyKey,
+      })
+      .returning();
+
+    // Update cached balance
+    await tx
+      .update(users)
+      .set({
+        pointsBalance: newBalance,
+        pointsUpdatedAt: new Date(),
+      })
+      .where(eq(users.userId, userId));
+
+    return { alreadyProcessed: false, transaction };
+  };
+
+  try {
+    // If an existing transaction was provided, use it directly
+    if (existingTx) {
+      const result = await executeDeduct(existingTx);
+      return { success: true, transaction: result.transaction };
+    }
+
+    // Otherwise create a new transaction
     const result = await db.transaction(async (tx) => {
-      // Get current balance with row lock
-      const [user] = await tx
-        .select({ pointsBalance: users.pointsBalance })
-        .from(users)
-        .where(eq(users.userId, userId))
-        .for('update');
-
-      if (!user) {
-        throw new Error('User not found');
-      }
-
-      // Check sufficient balance
-      if (user.pointsBalance < amount) {
-        // Log fraud attempt
-        await tx.insert(fraudAttempts).values({
-          userId,
-          reason: 'insufficient_balance',
-          action: `Attempted to deduct ${amount} points`,
-          metadata: { amount },
-        });
-        throw new Error('Insufficient balance');
-      }
-
-      const newBalance = user.pointsBalance - amount;
-
-      // Insert ledger entry (negative amount for debit)
-      const [transaction] = await tx
-        .insert(pointTransactions)
-        .values({
-          userId,
-          amount: -amount, // Negative for deduction
-          type,
-          balanceAfter: newBalance,
-          description,
-          metadata,
-          idempotencyKey,
-        })
-        .returning();
-
-      // Update cached balance
-      await tx
-        .update(users)
-        .set({
-          pointsBalance: newBalance,
-          pointsUpdatedAt: new Date(),
-        })
-        .where(eq(users.userId, userId));
-
-      return transaction;
+      return executeDeduct(tx);
     });
 
-    return { success: true, transaction: result };
+    return { success: true, transaction: result.transaction };
   } catch (error) {
     console.error('[Points] Deduct error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -220,7 +248,8 @@ export async function deductPoints(params: TransactionParams): Promise<{ success
 }
 
 /**
- * Transfer points between users
+ * Transfer points between users (atomic operation)
+ * Both debit and credit happen in a single transaction to prevent partial transfers.
  */
 export async function transferPoints(params: TransferParams): Promise<{ success: boolean; error?: string }> {
   const { fromUserId, toUserId, amount, idempotencyKey, ipAddress } = params;
@@ -256,8 +285,9 @@ export async function transferPoints(params: TransferParams): Promise<{ success:
   }
 
   try {
+    // Use a single transaction for both operations to ensure atomicity
     await db.transaction(async (tx) => {
-      // Deduct from sender
+      // Deduct from sender - pass the transaction context
       const deductResult = await deductPoints({
         userId: fromUserId,
         amount,
@@ -265,13 +295,14 @@ export async function transferPoints(params: TransferParams): Promise<{ success:
         description: `Transfer to user`,
         idempotencyKey: `${idempotencyKey}-out`,
         metadata: { toUserId, ipAddress },
+        tx, // Pass transaction to ensure atomicity
       });
 
       if (!deductResult.success) {
         throw new Error(deductResult.error);
       }
 
-      // Credit to receiver
+      // Credit to receiver - pass the same transaction context
       const awardResult = await awardPoints({
         userId: toUserId,
         amount,
@@ -282,6 +313,7 @@ export async function transferPoints(params: TransferParams): Promise<{ success:
           fromUserId,
           relatedTransactionId: deductResult.transaction?.transactionId,
         },
+        tx, // Pass transaction to ensure atomicity
       });
 
       if (!awardResult.success) {
