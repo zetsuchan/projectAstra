@@ -4,11 +4,13 @@ import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Globe, Sun, Moon, ThumbsUp, MessageSquare, Share2, Star, Sparkles } from 'lucide-react';
 import Link from 'next/link';
+import { usePrivy } from '@privy-io/react-auth';
 import { OrbitVisual } from '@/components/ui/orbit-visual';
 import type { FeedItem, TrendingTopic } from '@/lib/api-types';
 import { fetchFeedItems, fetchTrendingTopics } from '@/lib/api-client';
 
 export default function FeedPage() {
+    const { ready, authenticated, user, login, logout } = usePrivy();
     const [theme, setTheme] = useState('dark');
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [trendingTopics, setTrendingTopics] = useState<TrendingTopic[]>([]);
@@ -58,7 +60,7 @@ export default function FeedPage() {
             <OrbitVisual theme={theme} />
 
             {/* Feed Header */}
-            <header className="sticky top-0 z-30 px-6 py-4 border-b border-[var(--border-color)] bg-[var(--bg-main)]/80 backdrop-blur-md flex justify-between items-center">
+            <header className="sticky top-0 z-30 px-6 py-4 border-b border-[var(--border-color)] bg-[var(--bg-main)]/95 backdrop-blur-sm md:backdrop-blur-md flex justify-between items-center">
                 <div className="flex items-center gap-4">
                     <Link
                         href="/"
@@ -77,12 +79,35 @@ export default function FeedPage() {
                     </div>
                 </div>
 
-                <button
-                    onClick={toggleTheme}
-                    className="p-2 rounded-full hover:bg-[var(--bg-card-hover)] transition-colors text-[var(--text-main)]"
-                >
-                    {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={toggleTheme}
+                        className="p-2 rounded-full hover:bg-[var(--bg-card-hover)] transition-colors text-[var(--text-main)]"
+                    >
+                        {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+                    </button>
+                    {authenticated && user ? (
+                        <div className="hidden md:flex items-center gap-3">
+                            <span className="text-xs text-[var(--text-muted)] max-w-[120px] truncate">
+                                {user.email?.address ?? (user.wallet?.address ? `${user.wallet.address.slice(0, 4)}...${user.wallet.address.slice(-4)}` : 'Connected')}
+                            </span>
+                            <button
+                                onClick={() => logout()}
+                                className="px-4 py-1.5 border border-[var(--border-color)] rounded-full text-xs uppercase tracking-widest hover:bg-[var(--text-main)] hover:text-[var(--bg-main)] transition-all"
+                            >
+                                Sign Out
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => login()}
+                            disabled={!ready}
+                            className="hidden md:block px-4 py-1.5 border border-[var(--border-color)] rounded-full text-xs uppercase tracking-widest hover:bg-[var(--text-main)] hover:text-[var(--bg-main)] transition-all disabled:opacity-50"
+                        >
+                            {!ready ? 'Loading...' : 'Sign In'}
+                        </button>
+                    )}
+                </div>
             </header>
 
             {/* Content Layout */}

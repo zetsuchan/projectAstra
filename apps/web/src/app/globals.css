@@ -93,6 +93,57 @@ h1, h2, h3, .font-serif {
     background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
 
+/* Disable grain on mobile for performance */
+@media (max-width: 768px) {
+    .grain {
+        display: none;
+    }
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+    .grain {
+        display: none;
+    }
+}
+
 .bg-glow-radial {
    background-image: radial-gradient(circle at center, rgba(249, 168, 212, 0.15) 0%, transparent 70%);
+}
+
+/* GPU-accelerated orbit animations */
+@keyframes orbit-slow {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+@keyframes orbit-medium-reverse {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+}
+
+@keyframes orbit-fast {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.animate-orbit-slow {
+    animation: orbit-slow 120s linear infinite;
+}
+
+.animate-orbit-medium-reverse {
+    animation: orbit-medium-reverse 90s linear infinite;
+}
+
+.animate-orbit-fast {
+    animation: orbit-fast 40s linear infinite;
+}
+
+/* Pause animations on mobile to save battery, or when reduced motion is preferred */
+@media (max-width: 768px), (prefers-reduced-motion: reduce) {
+    .animate-orbit-slow,
+    .animate-orbit-medium-reverse,
+    .animate-orbit-fast {
+        animation-play-state: paused;
+    }
 }

@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, and } from 'drizzle-orm';
 import { db } from '@/db';
-import { feedItems, predictionMarkets } from '@/db/schema';
+import { feedItems, predictionMarkets, chatThreads } from '@/db/schema';
 import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
+import { buildUserContextPrompt } from '@/lib/context-builder';
+import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
+import { verifyAuthToken, type AuthenticatedUser } from '@/lib/auth-server';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -23,7 +26,10 @@ const getOpenRouterHeaders = () => {
     };
 };
 
-const requestAssistantReply = async (content: string) => {
+type MessageRole = 'system' | 'user' | 'assistant';
+type Message = { role: MessageRole; content: string };
+
+const requestAssistantReply = async (messages: Message[]) => {
     const headers = getOpenRouterHeaders();
     if (!headers) {
         return { error: 'missing_openrouter_key' } as const;
@@ -34,7 +40,7 @@ const requestAssistantReply = async (content: string) => {
         headers,
         body: JSON.stringify({
             model: process.env.OPENROUTER_MODEL ?? DEFAULT_MODEL,
-            messages: [{ role: 'user', content }],
+            messages,
         }),
     });
 
@@ -163,6 +169,9 @@ app.get('/chat/threads/:threadId/messages', (c) => {
 });
 
 app.post('/chat/threads/:threadId/messages', async (c) => {
+    // Authenticate user from token - NEVER trust userId from request body
+    const authUser = await verifyAuthToken(c.req.raw);
+
     let payload: { content?: string } | null = null;
 
     try {
@@ -175,15 +184,50 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
         return c.json({ error: 'content_required' }, 400);
     }
 
+    const threadId = c.req.param('threadId');
+
+    // Verify thread belongs to authenticated user (if authenticated)
+    if (authUser) {
+        const thread = await db
+            .select({ userId: chatThreads.userId })
+            .from(chatThreads)
+            .where(and(
+                eq(chatThreads.threadId, threadId),
+                eq(chatThreads.userId, authUser.userId)
+            ))
+            .limit(1);
+
+        if (thread.length === 0) {
+            // Thread doesn't exist or doesn't belong to this user
+            return c.json({ error: 'thread_not_found' }, 404);
+        }
+    }
+
     const userMessage: ChatMessage = {
         id: crypto.randomUUID(),
-        threadId: c.req.param('threadId'),
+        threadId,
         role: 'user',
         content: payload.content.trim(),
         createdAt: new Date().toISOString(),
     };
 
-    const assistantReply = await requestAssistantReply(userMessage.content);
+    // Build message array with system prompt and user context
+    const messages: Message[] = [
+        { role: 'system', content: LUMI_SYSTEM_PROMPT },
+    ];
+
+    // Add user-specific context only for authenticated users
+    if (authUser) {
+        const userContext = await buildUserContextPrompt(authUser.userId, threadId);
+        if (userContext) {
+            messages.push({ role: 'system', content: userContext });
+        }
+    }
+
+    // Add the user's message
+    messages.push({ role: 'user', content: userMessage.content });
+
+    const assistantReply = await requestAssistantReply(messages);
 
     if ('error' in assistantReply) {
         return c.json({ error: assistantReply.error }, 502);
