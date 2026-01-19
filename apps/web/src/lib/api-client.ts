@@ -1,10 +1,11 @@
 import type { ChatMessage, ChatSendResponse, FeedItem, MarketsOverview, TrendingTopic } from './api-types';
+import { DEFAULT_THREAD_ID } from './chat-constants';
 
 const JSON_HEADERS = {
     'Content-Type': 'application/json',
 };
 
-export const DEFAULT_THREAD_ID = '00000000-0000-0000-0000-000000000000';
+export { DEFAULT_THREAD_ID };
 
 export async function fetchChatMessages(threadId: string): Promise<ChatMessage[]> {
     try {
@@ -17,9 +18,13 @@ export async function fetchChatMessages(threadId: string): Promise<ChatMessage[]
     }
 }
 
-export async function sendChatMessage(threadId: string, content: string): Promise<ChatSendResponse | null> {
+export async function sendChatMessage(
+    threadId: string,
+    content: string,
+    fetcher: typeof fetch = fetch
+): Promise<ChatSendResponse | null> {
     try {
-        const res = await fetch(`/api/chat/threads/${threadId}/messages`, {
+        const res = await fetcher(`/api/chat/threads/${threadId}/messages`, {
             method: 'POST',
             headers: JSON_HEADERS,
             body: JSON.stringify({ content }),

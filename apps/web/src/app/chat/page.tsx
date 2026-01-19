@@ -88,7 +88,7 @@ export default function ChatPage() {
         setMessages(prev => [...prev, newMsg]);
         setInputValue("");
 
-        const response = await sendChatMessage(DEFAULT_THREAD_ID, trimmed);
+        const response = await sendChatMessage(DEFAULT_THREAD_ID, trimmed, authFetch);
 
         if (response?.assistantMessage) {
             setMessages(prev => [...prev, response.assistantMessage]);

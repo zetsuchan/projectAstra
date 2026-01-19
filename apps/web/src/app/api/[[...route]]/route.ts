@@ -7,6 +7,7 @@ import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-type
 import { buildUserContextPrompt } from '@/lib/context-builder';
 import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
 import { verifyAuthToken, type AuthenticatedUser } from '@/lib/auth-server';
+import { DEFAULT_THREAD_ID } from '@/lib/chat-constants';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -348,7 +349,7 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
     const threadId = c.req.param('threadId');
 
     // Verify thread belongs to authenticated user (if authenticated)
-    if (authUser) {
+    if (authUser && threadId !== DEFAULT_THREAD_ID) {
         const thread = await db
             .select({ userId: chatThreads.userId })
             .from(chatThreads)
