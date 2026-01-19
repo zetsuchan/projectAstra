@@ -125,18 +125,23 @@ export function useWallet() {
 export function useAuthenticatedFetch() {
     const { getAccessToken } = usePrivy();
 
-    const authFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+    const authFetch: typeof fetch = async (input: RequestInfo | URL, options: RequestInit = {}): Promise<Response> => {
         const token = await getAccessToken();
 
-        const headers = new Headers(options.headers);
+        const headers = input instanceof Request ? new Headers(input.headers) : new Headers();
+        const optionHeaders = new Headers(options.headers);
+        optionHeaders.forEach((value, key) => {
+            headers.set(key, value);
+        });
         if (token) {
             headers.set('Authorization', `Bearer ${token}`);
         }
 
-        return fetch(url, {
-            ...options,
-            headers,
-        });
+        if (input instanceof Request) {
+            return fetch(new Request(input, { ...options, headers }));
+        }
+
+        return fetch(input, { ...options, headers });
     };
 
     return authFetch;
