@@ -3,6 +3,7 @@ import { Inter, Playfair_Display } from 'next/font/google';
 import './globals.css';
 import { MobileNav } from '@/components/layout/nav-bar';
 import { PrivyProvider } from '@/components/providers/privy-provider';
+import { AuthSync } from '@/components/auth/auth-sync';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -30,6 +31,7 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} ${playfair.variable}`}>
       <body className="antialiased font-sans bg-[var(--bg-main)] text-[var(--text-main)] overflow-x-hidden selection:bg-[var(--rose-900)] selection:text-white">
         <PrivyProvider>
+          <AuthSync />
           <div className="grain" />
           {children}
           <MobileNav />
