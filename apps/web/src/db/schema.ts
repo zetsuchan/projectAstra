@@ -10,6 +10,8 @@ import {
   index,
   bigint,
   integer,
+  vector,
+  real,
 } from 'drizzle-orm/pg-core';
 
 // ============================================================================
@@ -92,6 +94,8 @@ export const chatMessages = pgTable(
     userId: uuid('user_id').references(() => users.userId).notNull(),
     role: text('role').$type<'user' | 'assistant'>().notNull(),
     content: text('content').notNull(),
+    // Memory permission - user can mark sensitive messages
+    excludeFromMemory: boolean('exclude_from_memory').default(false),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => [index('chat_messages_thread_created_idx').on(table.threadId, table.createdAt)]
@@ -107,10 +111,19 @@ export const diaryEntries = pgTable(
     userId: uuid('user_id').references(() => users.userId).notNull(),
     title: text('title'),
     body: text('body').notNull(),
-    mood: text('mood'),
+    // Mood tracking
+    mood: text('mood'), // Primary mood (legacy, keep for backward compat)
+    moodTags: jsonb('mood_tags').$type<string[]>(), // Multiple mood tags
+    // Prompts and context
     promptId: uuid('prompt_id').references(() => prompts.promptId),
     astroTags: jsonb('astro_tags').$type<string[]>(),
+    // AI features
+    aiReflection: text('ai_reflection'), // Optional AI-generated insight
+    // Memory processing tracking
+    processedToMemory: boolean('processed_to_memory').default(false),
+    processedAt: timestamp('processed_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow(),
   },
   (table) => [index('diary_entries_user_created_idx').on(table.userId, table.createdAt)]
 );
@@ -165,14 +178,42 @@ export const prompts = pgTable('prompts', {
 });
 
 // ============================================================================
-// MEMORIES (optional Phase 1)
+// MEMORIES (Enhanced for RAG + semantic search)
 // ============================================================================
-export const memories = pgTable('memories', {
-  memoryId: uuid('memory_id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').references(() => users.userId).notNull(),
-  summary: text('summary').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+export const memories = pgTable(
+  'memories',
+  {
+    memoryId: uuid('memory_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    // Memory content
+    content: text('content').notNull(), // The actual memory text
+    // Categorization
+    type: text('type').$type<
+      'fact' |           // "User is a Scorpio sun"
+      'preference' |     // "User prefers direct advice"
+      'relationship' |   // "User's boyfriend is named Alex"
+      'event' |          // "User started a new job in January"
+      'emotion' |        // "User felt anxious about the move"
+      'diary_summary'    // Summarized from diary entries
+    >().notNull(),
+    // Source tracking (where did this memory come from?)
+    sourceType: text('source_type').$type<'chat' | 'diary' | 'onboarding'>().notNull(),
+    sourceId: uuid('source_id'), // threadId or entryId
+    // Semantic search
+    embedding: vector('embedding', { dimensions: 1536 }), // OpenAI ada-002 = 1536 dims
+    // Relevance scoring
+    importance: integer('importance').default(3), // 1-5 scale
+    // Lifecycle
+    expiresAt: timestamp('expires_at'), // Optional expiration for temporary facts
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('memories_user_type_idx').on(table.userId, table.type),
+    index('memories_user_created_idx').on(table.userId, table.createdAt),
+    // Note: HNSW index for vector search should be created via raw SQL migration
+  ]
+);
 
 // ============================================================================
 // PREDICTION MARKETS
@@ -293,5 +334,77 @@ export const fraudAttempts = pgTable(
   (table) => [
     index('fraud_attempts_user_idx').on(table.userId),
     index('fraud_attempts_created_idx').on(table.createdAt),
+  ]
+);
+
+// ============================================================================
+// TRANSIT CACHE (Computed astrology transits)
+// ============================================================================
+export const transitCache = pgTable(
+  'transit_cache',
+  {
+    cacheId: uuid('cache_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    chartId: uuid('chart_id').references(() => charts.chartId).notNull(),
+    // Cache metadata
+    computedAt: timestamp('computed_at').defaultNow().notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    // Transit data
+    transits: jsonb('transits').$type<{
+      date: string;
+      aspects: Array<{
+        transitPlanet: string;
+        natalPlanet: string;
+        aspectType: string; // conjunction, trine, square, etc.
+        orb: number;
+        isApplying: boolean;
+      }>;
+      moonPhase: string;
+      retrogradeList: string[];
+    }>().notNull(),
+  },
+  (table) => [
+    index('transit_cache_user_expires_idx').on(table.userId, table.expiresAt),
+  ]
+);
+
+// ============================================================================
+// KNOWLEDGE BASE (RAG chunks for astrology knowledge)
+// ============================================================================
+export const knowledgeBase = pgTable(
+  'knowledge_base',
+  {
+    chunkId: uuid('chunk_id').primaryKey().defaultRandom(),
+    // Categorization
+    category: text('category').$type<
+      'sign' |          // Zodiac sign descriptions
+      'house' |         // House meanings
+      'planet' |        // Planet meanings
+      'aspect' |        // Aspect interpretations
+      'transit' |       // Transit effects
+      'compatibility' | // Compatibility patterns
+      'tarot' |         // Tarot card meanings
+      'glossary'        // General astrology terms
+    >().notNull(),
+    subcategory: text('subcategory'), // e.g., "aries", "first_house", "sun"
+    // Content
+    title: text('title').notNull(),
+    content: text('content').notNull(),
+    // Semantic search
+    embedding: vector('embedding', { dimensions: 1536 }),
+    // Metadata
+    metadata: jsonb('metadata').$type<{
+      signs?: string[];
+      planets?: string[];
+      houses?: number[];
+      keywords?: string[];
+    }>(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow(),
+  },
+  (table) => [
+    index('knowledge_base_category_idx').on(table.category),
+    index('knowledge_base_subcategory_idx').on(table.subcategory),
+    // Note: HNSW index for vector search should be created via raw SQL migration
   ]
 );

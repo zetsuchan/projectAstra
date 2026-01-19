@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, Sparkles, Sun, Moon, Zap, BookOpen, Clock, Send } from 'lucide-react';
 import Link from 'next/link';
 import { usePrivy } from '@privy-io/react-auth';
 import { OrbitVisual } from '@/components/ui/orbit-visual';
+import { ChartOnboarding } from '@/components/onboarding/chart-onboarding';
+import { useAuthenticatedFetch } from '@/lib/auth';
 import type { ChatMessage } from '@/lib/api-types';
 import { DEFAULT_THREAD_ID, fetchChatMessages, sendChatMessage } from '@/lib/api-client';
 
@@ -16,6 +18,7 @@ interface ChatPageProps {
 
 export default function ChatPage() {
     const { ready, authenticated, user, login, logout } = usePrivy();
+    const authFetch = useAuthenticatedFetch();
     // Local theme state for now, ideally this moves to a Context
     const [theme, setTheme] = useState('dark');
     const toggleTheme = () => {
@@ -27,6 +30,30 @@ export default function ChatPage() {
     const [isLoading, setIsLoading] = useState(true);
     const [inputValue, setInputValue] = useState("");
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const [showOnboarding, setShowOnboarding] = useState(false);
+    const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
+
+    // Check onboarding status
+    useEffect(() => {
+        if (!authenticated || hasCheckedOnboarding) return;
+
+        const checkOnboarding = async () => {
+            try {
+                const res = await authFetch('/api/me');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (!data.onboardingCompleted) {
+                        setShowOnboarding(true);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to check onboarding:', err);
+            }
+            setHasCheckedOnboarding(true);
+        };
+
+        checkOnboarding();
+    }, [authenticated, hasCheckedOnboarding, authFetch]);
 
     useEffect(() => {
         let isMounted = true;
@@ -87,6 +114,16 @@ export default function ChatPage() {
             exit={{ opacity: 0, x: 20 }}
             className={`relative h-screen flex flex-col overflow-hidden ${theme}`}
         >
+            {/* Onboarding Modal */}
+            <AnimatePresence>
+                {showOnboarding && (
+                    <ChartOnboarding
+                        onComplete={() => setShowOnboarding(false)}
+                        onSkip={() => setShowOnboarding(false)}
+                    />
+                )}
+            </AnimatePresence>
+
             <OrbitVisual theme={theme} />
 
             {/* Chat Header */}
@@ -148,6 +185,22 @@ export default function ChatPage() {
 
                 {/* Desktop Sidebar (Context) */}
                 <div className="hidden lg:flex w-80 border-r border-[var(--border-color)] flex-col bg-[var(--glass-panel)] backdrop-blur-sm p-6 gap-6">
+                    {/* Diary Quick Link */}
+                    <Link
+                        href="/diary"
+                        className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] transition-colors group"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[var(--lilac-300)] to-[var(--rose-400)] flex items-center justify-center">
+                                <BookOpen size={14} className="text-white" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-[var(--text-main)] group-hover:text-[var(--rose-300)] transition-colors">Open Diary</p>
+                                <p className="text-[10px] text-[var(--text-muted)]">Write an entry</p>
+                            </div>
+                        </div>
+                    </Link>
+
                     <div className="space-y-4">
                         <h3 className="text-xs uppercase tracking-widest text-[var(--text-muted)] font-medium">Active Context</h3>
 

@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
 import { desc, eq, and } from 'drizzle-orm';
 import { db } from '@/db';
-import { feedItems, predictionMarkets, chatThreads } from '@/db/schema';
+import { feedItems, predictionMarkets, chatThreads, users, charts } from '@/db/schema';
 import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
 import { buildUserContextPrompt } from '@/lib/context-builder';
 import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
@@ -60,6 +60,167 @@ const requestAssistantReply = async (messages: Message[]) => {
 
 app.get('/health', (c) => {
     return c.json({ ok: true });
+});
+
+// ============================================================================
+// AUTH
+// ============================================================================
+
+/**
+ * Sync authenticated user to database.
+ * Called from client after Privy login to ensure user exists in our DB.
+ */
+app.post('/auth/sync', async (c) => {
+    let payload: { privyId?: string; email?: string; walletAddress?: string } | null = null;
+
+    try {
+        payload = await c.req.json();
+    } catch {
+        return c.json({ error: 'invalid_json' }, 400);
+    }
+
+    if (!payload?.privyId) {
+        return c.json({ error: 'privy_id_required' }, 400);
+    }
+
+    const { privyId, email, walletAddress } = payload;
+
+    // Check if user exists
+    const existingUser = await db.query.users.findFirst({
+        where: eq(users.privyId, privyId),
+    });
+
+    if (existingUser) {
+        // Update existing user with latest info
+        const [updated] = await db
+            .update(users)
+            .set({
+                email: email ?? existingUser.email,
+                walletAddress: walletAddress ?? existingUser.walletAddress,
+            })
+            .where(eq(users.privyId, privyId))
+            .returning();
+
+        return c.json({ user: updated, created: false });
+    }
+
+    // Create new user
+    const [newUser] = await db
+        .insert(users)
+        .values({
+            privyId,
+            email: email ?? null,
+            walletAddress: walletAddress ?? null,
+        })
+        .returning();
+
+    return c.json({ user: newUser, created: true }, 201);
+});
+
+// ============================================================================
+// ONBOARDING
+// ============================================================================
+
+/**
+ * Get current user's onboarding status and chart info
+ */
+app.get('/me', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    if (!authUser) {
+        return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    const user = await db.query.users.findFirst({
+        where: eq(users.userId, authUser.userId),
+    });
+
+    if (!user) {
+        return c.json({ error: 'user_not_found' }, 404);
+    }
+
+    const chart = await db.query.charts.findFirst({
+        where: eq(charts.userId, authUser.userId),
+    });
+
+    return c.json({
+        userId: user.userId,
+        onboardingCompleted: user.onboardingCompleted,
+        chart: chart ? {
+            sunSign: chart.sunSign,
+            moonSign: chart.moonSign,
+            risingSign: chart.risingSign,
+            birthDate: chart.birthDate,
+        } : null,
+    });
+});
+
+/**
+ * Save user's chart data and mark onboarding complete
+ */
+app.post('/onboarding/chart', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    if (!authUser) {
+        return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    let payload: {
+        birthDate?: string;
+        birthTime?: string;
+        birthTimePrecision?: 'exact' | 'approximate' | 'unknown';
+        birthLocation?: string;
+        sunSign?: string;
+        moonSign?: string;
+        risingSign?: string;
+    } | null = null;
+
+    try {
+        payload = await c.req.json();
+    } catch {
+        return c.json({ error: 'invalid_json' }, 400);
+    }
+
+    if (!payload?.sunSign) {
+        return c.json({ error: 'sun_sign_required' }, 400);
+    }
+
+    // Create or update chart
+    const existingChart = await db.query.charts.findFirst({
+        where: eq(charts.userId, authUser.userId),
+    });
+
+    if (existingChart) {
+        await db
+            .update(charts)
+            .set({
+                birthDate: payload.birthDate ?? existingChart.birthDate,
+                birthTime: payload.birthTime ?? existingChart.birthTime,
+                birthTimePrecision: payload.birthTimePrecision ?? existingChart.birthTimePrecision,
+                birthLocation: payload.birthLocation ?? existingChart.birthLocation,
+                sunSign: payload.sunSign,
+                moonSign: payload.moonSign ?? existingChart.moonSign,
+                risingSign: payload.risingSign ?? existingChart.risingSign,
+            })
+            .where(eq(charts.chartId, existingChart.chartId));
+    } else {
+        await db.insert(charts).values({
+            userId: authUser.userId,
+            birthDate: payload.birthDate ?? new Date().toISOString().split('T')[0],
+            birthTime: payload.birthTime ?? null,
+            birthTimePrecision: payload.birthTimePrecision ?? 'unknown',
+            birthLocation: payload.birthLocation ?? null,
+            sunSign: payload.sunSign,
+            moonSign: payload.moonSign ?? null,
+            risingSign: payload.risingSign ?? null,
+        });
+    }
+
+    // Mark onboarding complete
+    await db
+        .update(users)
+        .set({ onboardingCompleted: true })
+        .where(eq(users.userId, authUser.userId));
+
+    return c.json({ success: true });
 });
 
 app.get('/feed', async (c) => {

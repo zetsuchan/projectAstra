@@ -1,8 +1,8 @@
 'use client';
-import { Sun, Moon, MessageCircle, Newspaper, TrendingUp, Sparkles } from 'lucide-react';
+import { Sun, Moon, MessageCircle, Newspaper, TrendingUp, Sparkles, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { usePrivy } from '@privy-io/react-auth';
+import { useAuth } from '@/lib/auth';
 
 interface NavBarProps {
     theme?: string;
@@ -10,13 +10,14 @@ interface NavBarProps {
 }
 
 export const NavBar = ({ theme, toggleTheme }: NavBarProps) => {
-    const { ready, authenticated, user, login, logout } = usePrivy();
+    const { user, isLoading, isAuthenticated, login, logout } = useAuth();
 
     return (
         <nav className="fixed top-0 left-0 w-full p-4 md:p-6 flex justify-between items-center z-50 text-[var(--text-main)] transition-colors duration-500">
             <Link href="/" className="font-serif text-lg tracking-wider italic cursor-pointer">Astra</Link>
             <div className="hidden md:flex gap-8 text-xs tracking-widest uppercase font-sans font-medium opacity-60">
                 <Link href="/chat" className="hover:opacity-100 transition-opacity">Chat</Link>
+                <Link href="/diary" className="hover:opacity-100 transition-opacity">Diary</Link>
                 <Link href="/feed" className="hover:opacity-100 transition-opacity">Feed</Link>
                 <Link href="/markets" className="hover:opacity-100 transition-opacity">Markets</Link>
             </div>
@@ -29,10 +30,10 @@ export const NavBar = ({ theme, toggleTheme }: NavBarProps) => {
                     <Sun size={18} className="hidden dark:block" />
                     <Moon size={18} className="block dark:hidden" />
                 </button>
-                {authenticated && user ? (
+                {isAuthenticated && user ? (
                     <div className="hidden md:flex items-center gap-3">
                         <span className="text-xs text-[var(--text-muted)] max-w-[120px] truncate">
-                            {user.email?.address ?? (user.wallet?.address ? `${user.wallet.address.slice(0, 4)}...${user.wallet.address.slice(-4)}` : 'Connected')}
+                            {user.email ?? (user.wallet ? `${user.wallet.slice(0, 4)}...${user.wallet.slice(-4)}` : 'Connected')}
                         </span>
                         <button
                             onClick={() => logout()}
@@ -44,10 +45,10 @@ export const NavBar = ({ theme, toggleTheme }: NavBarProps) => {
                 ) : (
                     <button
                         onClick={() => login()}
-                        disabled={!ready}
+                        disabled={isLoading}
                         className="hidden md:block px-4 py-1.5 border border-[var(--border-color)] rounded-full text-xs uppercase tracking-widest hover:bg-[var(--text-main)] hover:text-[var(--bg-main)] transition-all disabled:opacity-50"
                     >
-                        {!ready ? 'Loading...' : 'Sign In'}
+                        {isLoading ? 'Loading...' : 'Sign In'}
                     </button>
                 )}
             </div>
@@ -61,6 +62,7 @@ export const MobileNav = () => {
     const navItems = [
         { href: '/', icon: Sparkles, label: 'Home' },
         { href: '/chat', icon: MessageCircle, label: 'Chat' },
+        { href: '/diary', icon: BookOpen, label: 'Diary' },
         { href: '/feed', icon: Newspaper, label: 'Feed' },
         { href: '/markets', icon: TrendingUp, label: 'Markets' },
     ];
