@@ -56,6 +56,20 @@ interface TransferParams {
 }
 
 // ============================================================================
+// ERRORS
+// ============================================================================
+
+class InsufficientBalanceError extends Error {
+  constructor(
+    public readonly userId: string,
+    public readonly attemptedAmount: number
+  ) {
+    super('Insufficient balance');
+    this.name = 'InsufficientBalanceError';
+  }
+}
+
+// ============================================================================
 // CONSTANTS
 // ============================================================================
 
@@ -109,19 +123,43 @@ export async function awardPoints(params: TransactionParams): Promise<{ success:
 
     const newBalance = user.pointsBalance + amount;
 
-    // Insert ledger entry
-    const [transaction] = await tx
-      .insert(pointTransactions)
-      .values({
-        userId,
-        amount,
-        type,
-        balanceAfter: newBalance,
-        description,
-        metadata,
-        idempotencyKey,
-      })
-      .returning();
+    // Insert ledger entry with race condition handling.
+    // If a concurrent insert wins, we'll get a unique constraint error.
+    // In that case, re-fetch and return the existing transaction.
+    let transaction;
+    try {
+      const [inserted] = await tx
+        .insert(pointTransactions)
+        .values({
+          userId,
+          amount,
+          type,
+          balanceAfter: newBalance,
+          description,
+          metadata,
+          idempotencyKey,
+        })
+        .returning();
+      transaction = inserted;
+    } catch (insertError: any) {
+      // Check for unique constraint violation (PostgreSQL error code 23505)
+      const isUniqueViolation =
+        insertError?.code === '23505' ||
+        insertError?.message?.includes('unique constraint') ||
+        insertError?.message?.includes('duplicate key');
+
+      if (isUniqueViolation) {
+        // Race condition: another transaction inserted first, fetch and return it
+        const existingTx = await tx.query.pointTransactions.findFirst({
+          where: eq(pointTransactions.idempotencyKey, idempotencyKey),
+        });
+        if (existingTx) {
+          return { alreadyProcessed: true, transaction: existingTx };
+        }
+      }
+      // Re-throw if not a unique constraint error or if we couldn't find the existing record
+      throw insertError;
+    }
 
     // Update cached balance
     await tx
@@ -188,33 +226,50 @@ export async function deductPoints(params: TransactionParams): Promise<{ success
       throw new Error('User not found');
     }
 
-    // Check sufficient balance
+    // Check sufficient balance - throw custom error to log fraud outside transaction
     if (user.pointsBalance < amount) {
-      // Log fraud attempt
-      await tx.insert(fraudAttempts).values({
-        userId,
-        reason: 'insufficient_balance',
-        action: `Attempted to deduct ${amount} points`,
-        metadata: { amount },
-      });
-      throw new Error('Insufficient balance');
+      throw new InsufficientBalanceError(userId, amount);
     }
 
     const newBalance = user.pointsBalance - amount;
 
-    // Insert ledger entry (negative amount for debit)
-    const [transaction] = await tx
-      .insert(pointTransactions)
-      .values({
-        userId,
-        amount: -amount, // Negative for deduction
-        type,
-        balanceAfter: newBalance,
-        description,
-        metadata,
-        idempotencyKey,
-      })
-      .returning();
+    // Insert ledger entry with race condition handling.
+    // If a concurrent insert wins, we'll get a unique constraint error.
+    // In that case, re-fetch and return the existing transaction.
+    let transaction;
+    try {
+      const [inserted] = await tx
+        .insert(pointTransactions)
+        .values({
+          userId,
+          amount: -amount, // Negative for deduction
+          type,
+          balanceAfter: newBalance,
+          description,
+          metadata,
+          idempotencyKey,
+        })
+        .returning();
+      transaction = inserted;
+    } catch (insertError: any) {
+      // Check for unique constraint violation (PostgreSQL error code 23505)
+      const isUniqueViolation =
+        insertError?.code === '23505' ||
+        insertError?.message?.includes('unique constraint') ||
+        insertError?.message?.includes('duplicate key');
+
+      if (isUniqueViolation) {
+        // Race condition: another transaction inserted first, fetch and return it
+        const existingTx = await tx.query.pointTransactions.findFirst({
+          where: eq(pointTransactions.idempotencyKey, idempotencyKey),
+        });
+        if (existingTx) {
+          return { alreadyProcessed: true, transaction: existingTx };
+        }
+      }
+      // Re-throw if not a unique constraint error or if we couldn't find the existing record
+      throw insertError;
+    }
 
     // Update cached balance
     await tx
@@ -242,6 +297,20 @@ export async function deductPoints(params: TransactionParams): Promise<{ success
 
     return { success: true, transaction: result.transaction };
   } catch (error) {
+    // Log fraud attempts outside the transaction so they persist even on rollback
+    if (error instanceof InsufficientBalanceError) {
+      try {
+        await db.insert(fraudAttempts).values({
+          userId: error.userId,
+          reason: 'insufficient_balance',
+          action: `Attempted to deduct ${error.attemptedAmount} points`,
+          metadata: { amount: error.attemptedAmount },
+        });
+      } catch (logError) {
+        console.error('[Points] Failed to log fraud attempt:', logError);
+      }
+    }
+
     console.error('[Points] Deduct error:', error);
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }

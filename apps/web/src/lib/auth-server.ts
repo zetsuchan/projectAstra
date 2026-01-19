@@ -6,6 +6,11 @@
  *
  * This module extracts and verifies auth tokens from request headers.
  * The userId should NEVER be trusted from request bodies.
+ *
+ * Environment Variables:
+ * - ALLOW_DEV_USER_IMPERSONATION: Set to "true" to enable X-Dev-User-Id header
+ *   for local development. Only works when NODE_ENV === 'development'.
+ *   Default: off (must be explicitly enabled).
  */
 
 import { db } from '@/db';
@@ -44,10 +49,14 @@ export async function verifyAuthToken(request: Request): Promise<AuthenticatedUs
   const authHeader = request.headers.get('Authorization');
   const token = extractBearerToken(authHeader);
 
-  // TODO: Implement proper Privy token verification
-  // For now in development, we accept a X-Dev-User-Id header
-  // This should be removed in production!
-  if (process.env.NODE_ENV === 'development') {
+  // Dev-only user impersonation via X-Dev-User-Id header.
+  // Requires BOTH conditions to be true:
+  // 1. NODE_ENV === 'development'
+  // 2. ALLOW_DEV_USER_IMPERSONATION === 'true' (explicit opt-in)
+  const isDevMode = process.env.NODE_ENV === 'development';
+  const isImpersonationAllowed = process.env.ALLOW_DEV_USER_IMPERSONATION === 'true';
+
+  if (isDevMode && isImpersonationAllowed) {
     const devUserId = request.headers.get('X-Dev-User-Id');
     if (devUserId) {
       const user = await db.query.users.findFirst({
