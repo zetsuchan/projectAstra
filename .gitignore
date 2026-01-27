@@ -3,3 +3,8 @@
 .env.*.local
 node_modules/
 .next/
+.turbo/
+.DS_Store
+
+# Remotion output
+apps/promo-video/out/
