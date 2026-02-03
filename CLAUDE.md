@@ -79,10 +79,37 @@ Required in `apps/web/.env.local`:
 - `OPENROUTER_API_KEY` - For AI chat functionality
 - `OPENROUTER_MODEL` - Optional, defaults to nvidia/nemotron-3-nano-30b-a3b:free
 
-## Session Completion Protocol
+## Workflow
+
+### Task Management Files
+- `tasks/todo.md` - Current task tracking with checkable items
+- `tasks/lessons.md` - Mistakes, corrections, and patterns to remember
+- `FORUSER.md` - Learning documentation explaining architecture and decisions
+
+### Session Startup
+1. Review `tasks/lessons.md` for past mistakes to avoid
+2. Check `tasks/todo.md` for current status
+3. Scan `FORUSER.md` for architecture context
+4. Verify tests pass before making changes
+
+### During Development
+- Enter plan mode for non-trivial tasks (3+ steps or architectural decisions)
+- If something goes wrong, STOP and re-plan immediately
+- Use subagents to keep main context clean
+- After any correction: update `tasks/lessons.md` with the pattern
+- Never mark a task complete without proving it works
+
+### Bug Fixing Protocol
+1. **Reproduce first** - Write a failing test before attempting fixes
+2. **Verify the test fails** for the right reason
+3. **Fix and prove** - The test must pass
+4. **Document** - Add notable bugs to `tasks/lessons.md`
+
+### Session Completion Protocol
 
 When ending a work session, always:
 1. Create issues for remaining work with `bd create`
 2. Run quality gates if code changed
 3. Update issue status with `bd update` or `bd close`
-4. Push to remote: `git pull --rebase && bd sync && git push`
+4. Update `tasks/todo.md` with session progress
+5. Push to remote: `git pull --rebase && bd sync && git push`
