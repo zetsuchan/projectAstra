@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { handle } from 'hono/vercel';
-import { desc, eq, and } from 'drizzle-orm';
+import { desc, eq, and, isNull, or, sql, inArray, gt } from 'drizzle-orm';
 import { db } from '@/db';
-import { feedItems, predictionMarkets, chatThreads, users, charts } from '@/db/schema';
-import type { ChatMessage, MarketsOverview, TrendingTopic } from '@/lib/api-types';
+import { feedItems, predictionMarkets, chatThreads, users, charts, polls, pollOptions, pollVotes } from '@/db/schema';
+import type { ChatMessage, MarketsOverview, TrendingTopic, Poll, PollOption, PollSignBreakdown } from '@/lib/api-types';
 import { buildUserContextPrompt } from '@/lib/context-builder';
 import { LUMI_SYSTEM_PROMPT } from '@/lib/system-prompt';
 import { verifyAuthToken, type AuthenticatedUser } from '@/lib/auth-server';
 import { DEFAULT_THREAD_ID } from '@/lib/chat-constants';
+import { triggerPollVote } from '@/lib/pusher';
 
 const app = new Hono().basePath('/api');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -404,6 +405,425 @@ app.post('/chat/threads/:threadId/messages', async (c) => {
     };
 
     return c.json({ userMessage, assistantMessage }, 201);
+});
+
+// ============================================================================
+// POLLS
+// ============================================================================
+
+/**
+ * Get all active polls
+ * Filters by user's sun sign if poll has targetSigns set
+ */
+app.get('/polls', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    let userSunSign: string | null = null;
+
+    if (authUser) {
+        const chart = await db.query.charts.findFirst({
+            where: eq(charts.userId, authUser.userId),
+            columns: { sunSign: true },
+        });
+        userSunSign = chart?.sunSign ?? null;
+    }
+
+    const now = new Date();
+
+    // Get active polls (not expired, not closed)
+    const activePolls = await db
+        .select()
+        .from(polls)
+        .where(
+            and(
+                isNull(polls.closedAt),
+                or(isNull(polls.expiresAt), gt(polls.expiresAt, now))
+            )
+        )
+        .orderBy(desc(polls.featured), desc(polls.createdAt))
+        .limit(20);
+
+    // Get user's votes if authenticated
+    const userVotes: Map<string, string> = new Map();
+    if (authUser && activePolls.length > 0) {
+        const pollIds = activePolls.map((p) => p.pollId);
+        const votes = await db
+            .select({ pollId: pollVotes.pollId, optionId: pollVotes.optionId })
+            .from(pollVotes)
+            .where(and(eq(pollVotes.userId, authUser.userId), inArray(pollVotes.pollId, pollIds)));
+        for (const v of votes) {
+            userVotes.set(v.pollId, v.optionId);
+        }
+    }
+
+    // Get all options for these polls
+    const pollIds = activePolls.map((p) => p.pollId);
+    const allOptions = pollIds.length > 0
+        ? await db
+            .select()
+            .from(pollOptions)
+            .where(inArray(pollOptions.pollId, pollIds))
+            .orderBy(pollOptions.displayOrder)
+        : [];
+
+    // Group options by poll
+    const optionsByPoll = new Map<string, typeof allOptions>();
+    for (const opt of allOptions) {
+        const existing = optionsByPoll.get(opt.pollId) ?? [];
+        existing.push(opt);
+        optionsByPoll.set(opt.pollId, existing);
+    }
+
+    // Filter and format polls
+    const formattedPolls: Poll[] = activePolls
+        .filter((poll) => {
+            // If poll has targetSigns, check if user's sign is included
+            const targets = poll.targetSigns as string[] | null;
+            if (!targets || targets.length === 0) return true;
+            if (!userSunSign) return false; // Anonymous users don't see targeted polls
+            return targets.includes(userSunSign);
+        })
+        .map((poll) => {
+            const opts = optionsByPoll.get(poll.pollId) ?? [];
+            const totalVotes = opts.reduce((sum, o) => sum + o.voteCount, 0);
+            const userVote = userVotes.get(poll.pollId);
+            const hasVoted = !!userVote;
+            const showResults = poll.showResultsBeforeVote || hasVoted;
+
+            const formattedOptions: PollOption[] = opts.map((o) => ({
+                id: o.optionId,
+                text: o.text,
+                voteCount: showResults ? o.voteCount : 0,
+                percentage: showResults && totalVotes > 0 ? Math.round((o.voteCount / totalVotes) * 100) : 0,
+            }));
+
+            return {
+                id: poll.pollId,
+                question: poll.question,
+                description: poll.description ?? undefined,
+                options: formattedOptions,
+                astroTags: (poll.astroTags as string[] | null) ?? undefined,
+                totalVotes: showResults ? totalVotes : 0,
+                userVote,
+                showResults,
+                featured: poll.featured ?? false,
+                expiresAt: poll.expiresAt?.toISOString(),
+                createdAt: poll.createdAt.toISOString(),
+            };
+        });
+
+    return c.json({ polls: formattedPolls });
+});
+
+/**
+ * Get a single poll by ID
+ */
+app.get('/polls/:pollId', async (c) => {
+    const pollId = c.req.param('pollId');
+    const authUser = await verifyAuthToken(c.req.raw);
+
+    const poll = await db.query.polls.findFirst({
+        where: eq(polls.pollId, pollId),
+    });
+
+    if (!poll) {
+        return c.json({ error: 'poll_not_found' }, 404);
+    }
+
+    const opts = await db
+        .select()
+        .from(pollOptions)
+        .where(eq(pollOptions.pollId, pollId))
+        .orderBy(pollOptions.displayOrder);
+
+    let userVote: string | undefined;
+    if (authUser) {
+        const vote = await db.query.pollVotes.findFirst({
+            where: and(eq(pollVotes.pollId, pollId), eq(pollVotes.userId, authUser.userId)),
+            columns: { optionId: true },
+        });
+        userVote = vote?.optionId;
+    }
+
+    const totalVotes = opts.reduce((sum, o) => sum + o.voteCount, 0);
+    const hasVoted = !!userVote;
+    const showResults = poll.showResultsBeforeVote || hasVoted;
+
+    const formattedOptions: PollOption[] = opts.map((o) => ({
+        id: o.optionId,
+        text: o.text,
+        voteCount: showResults ? o.voteCount : 0,
+        percentage: showResults && totalVotes > 0 ? Math.round((o.voteCount / totalVotes) * 100) : 0,
+    }));
+
+    const formattedPoll: Poll = {
+        id: poll.pollId,
+        question: poll.question,
+        description: poll.description ?? undefined,
+        options: formattedOptions,
+        astroTags: (poll.astroTags as string[] | null) ?? undefined,
+        totalVotes: showResults ? totalVotes : 0,
+        userVote,
+        showResults,
+        featured: poll.featured ?? false,
+        expiresAt: poll.expiresAt?.toISOString(),
+        createdAt: poll.createdAt.toISOString(),
+    };
+
+    return c.json({ poll: formattedPoll });
+});
+
+/**
+ * Vote on a poll
+ */
+app.post('/polls/:pollId/vote', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    if (!authUser) {
+        return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+
+    let payload: { optionId?: string; idempotencyKey?: string } | null = null;
+    try {
+        payload = await c.req.json();
+    } catch {
+        return c.json({ error: 'invalid_json' }, 400);
+    }
+
+    if (!payload?.optionId) {
+        return c.json({ error: 'option_id_required' }, 400);
+    }
+
+    const { optionId, idempotencyKey } = payload;
+
+    // Use a transaction for consistency
+    try {
+        const result = await db.transaction(async (tx) => {
+            // Check idempotency key if provided
+            if (idempotencyKey) {
+                const existingVote = await tx.query.pollVotes.findFirst({
+                    where: eq(pollVotes.idempotencyKey, idempotencyKey),
+                });
+                if (existingVote) {
+                    return { success: true, alreadyVoted: true, optionId: existingVote.optionId };
+                }
+            }
+
+            // Verify poll exists and is open
+            const poll = await tx.query.polls.findFirst({
+                where: eq(polls.pollId, pollId),
+            });
+
+            if (!poll) {
+                return { error: 'poll_not_found' };
+            }
+
+            if (poll.closedAt) {
+                return { error: 'poll_closed' };
+            }
+
+            if (poll.expiresAt && poll.expiresAt < new Date()) {
+                return { error: 'poll_expired' };
+            }
+
+            // Verify option belongs to this poll
+            const option = await tx.query.pollOptions.findFirst({
+                where: and(eq(pollOptions.optionId, optionId), eq(pollOptions.pollId, pollId)),
+            });
+
+            if (!option) {
+                return { error: 'invalid_option' };
+            }
+
+            // Check if user already voted (unique constraint will catch this, but check first for better error)
+            const existingVote = await tx.query.pollVotes.findFirst({
+                where: and(eq(pollVotes.pollId, pollId), eq(pollVotes.userId, authUser.userId)),
+            });
+
+            if (existingVote) {
+                return { error: 'already_voted' };
+            }
+
+            // Get user's chart for zodiac signs
+            const chart = await tx.query.charts.findFirst({
+                where: eq(charts.userId, authUser.userId),
+                columns: { sunSign: true, moonSign: true },
+            });
+
+            // Insert vote
+            await tx.insert(pollVotes).values({
+                pollId,
+                optionId,
+                userId: authUser.userId,
+                voterSunSign: chart?.sunSign ?? null,
+                voterMoonSign: chart?.moonSign ?? null,
+                idempotencyKey: idempotencyKey ?? null,
+            });
+
+            // Increment vote count on option
+            await tx
+                .update(pollOptions)
+                .set({ voteCount: sql`${pollOptions.voteCount} + 1` })
+                .where(eq(pollOptions.optionId, optionId));
+
+            return { success: true, alreadyVoted: false, optionId };
+        });
+
+        if ('error' in result) {
+            const statusCode = result.error === 'poll_not_found' ? 404 : 400;
+            return c.json({ error: result.error }, statusCode);
+        }
+
+        // Trigger real-time update via Pusher
+        if (result.success && !result.alreadyVoted) {
+            // Get updated poll data for broadcast
+            const opts = await db
+                .select()
+                .from(pollOptions)
+                .where(eq(pollOptions.pollId, pollId));
+            const totalVotes = opts.reduce((sum, o) => sum + o.voteCount, 0);
+
+            await triggerPollVote(pollId, {
+                optionId: result.optionId,
+                totalVotes,
+                options: opts.map((o) => ({
+                    id: o.optionId,
+                    voteCount: o.voteCount,
+                    percentage: totalVotes > 0 ? Math.round((o.voteCount / totalVotes) * 100) : 0,
+                })),
+            });
+        }
+
+        return c.json({ success: true, optionId: result.optionId });
+    } catch (error) {
+        // Handle unique constraint violation
+        if (error instanceof Error && error.message.includes('unique')) {
+            return c.json({ error: 'already_voted' }, 400);
+        }
+        console.error('[Poll Vote] Error:', error);
+        return c.json({ error: 'vote_failed' }, 500);
+    }
+});
+
+/**
+ * Get zodiac breakdown for a poll (only after voting)
+ */
+app.get('/polls/:pollId/signs', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    if (!authUser) {
+        return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    const pollId = c.req.param('pollId');
+
+    // Verify user has voted on this poll
+    const userVote = await db.query.pollVotes.findFirst({
+        where: and(eq(pollVotes.pollId, pollId), eq(pollVotes.userId, authUser.userId)),
+    });
+
+    if (!userVote) {
+        return c.json({ error: 'must_vote_first' }, 403);
+    }
+
+    // Get all votes with sun signs
+    const votes = await db
+        .select({
+            optionId: pollVotes.optionId,
+            sunSign: pollVotes.voterSunSign,
+        })
+        .from(pollVotes)
+        .where(eq(pollVotes.pollId, pollId));
+
+    // Build breakdown: { [sign]: { [optionId]: count } }
+    const breakdown: PollSignBreakdown = {};
+
+    for (const vote of votes) {
+        const sign = vote.sunSign ?? 'Unknown';
+        if (!breakdown[sign]) {
+            breakdown[sign] = {};
+        }
+        breakdown[sign][vote.optionId] = (breakdown[sign][vote.optionId] || 0) + 1;
+    }
+
+    return c.json({ breakdown });
+});
+
+/**
+ * Create a new poll (admin only)
+ */
+app.post('/admin/polls', async (c) => {
+    const authUser = await verifyAuthToken(c.req.raw);
+    if (!authUser) {
+        return c.json({ error: 'unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const user = await db.query.users.findFirst({
+        where: eq(users.userId, authUser.userId),
+        columns: { isAdmin: true },
+    });
+
+    if (!user?.isAdmin) {
+        return c.json({ error: 'forbidden' }, 403);
+    }
+
+    let payload: {
+        question?: string;
+        description?: string;
+        options?: string[];
+        astroTags?: string[];
+        targetSigns?: string[];
+        showResultsBeforeVote?: boolean;
+        featured?: boolean;
+        expiresAt?: string;
+    } | null = null;
+
+    try {
+        payload = await c.req.json();
+    } catch {
+        return c.json({ error: 'invalid_json' }, 400);
+    }
+
+    if (!payload?.question || !payload.options || payload.options.length < 2) {
+        return c.json({ error: 'question_and_options_required' }, 400);
+    }
+
+    const { question, description, options, astroTags, targetSigns, showResultsBeforeVote, featured, expiresAt } = payload;
+
+    // Create poll and options in a transaction
+    const result = await db.transaction(async (tx) => {
+        const [poll] = await tx
+            .insert(polls)
+            .values({
+                question,
+                description: description ?? null,
+                astroTags: astroTags ?? null,
+                targetSigns: targetSigns ?? null,
+                showResultsBeforeVote: showResultsBeforeVote ?? false,
+                featured: featured ?? false,
+                expiresAt: expiresAt ? new Date(expiresAt) : null,
+                createdBy: authUser.userId,
+            })
+            .returning();
+
+        const optionValues = options.map((text, index) => ({
+            pollId: poll.pollId,
+            text,
+            displayOrder: index,
+        }));
+
+        const createdOptions = await tx.insert(pollOptions).values(optionValues).returning();
+
+        return { poll, options: createdOptions };
+    });
+
+    return c.json({
+        poll: {
+            id: result.poll.pollId,
+            question: result.poll.question,
+            options: result.options.map((o) => ({ id: o.optionId, text: o.text })),
+        },
+    }, 201);
 });
 
 export const runtime = 'nodejs';

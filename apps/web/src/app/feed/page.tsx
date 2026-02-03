@@ -1,18 +1,20 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronLeft, Globe, Sun, Moon, ThumbsUp, MessageSquare, Share2, Star, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { usePrivy } from '@privy-io/react-auth';
 import { OrbitVisual } from '@/components/ui/orbit-visual';
-import type { FeedItem, TrendingTopic } from '@/lib/api-types';
-import { fetchFeedItems, fetchTrendingTopics } from '@/lib/api-client';
+import { PollCard } from '@/components/poll';
+import type { FeedItem, TrendingTopic, Poll } from '@/lib/api-types';
+import { fetchFeedItems, fetchTrendingTopics, fetchPolls } from '@/lib/api-client';
 
 export default function FeedPage() {
-    const { ready, authenticated, user, login, logout } = usePrivy();
+    const { ready, authenticated, user, login, logout, getAccessToken } = usePrivy();
     const [theme, setTheme] = useState('dark');
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
+    const [polls, setPolls] = useState<Poll[]>([]);
     const [trendingTopics, setTrendingTopics] = useState<TrendingTopic[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const toggleTheme = () => {
@@ -20,18 +22,35 @@ export default function FeedPage() {
         document.documentElement.classList.toggle('light');
     };
 
+    // Create authenticated fetch helper
+    const createAuthFetch = useCallback(async () => {
+        if (!authenticated) return fetch;
+        const token = await getAccessToken();
+        return (url: RequestInfo | URL, init?: RequestInit) =>
+            fetch(url, {
+                ...init,
+                headers: {
+                    ...init?.headers,
+                    Authorization: `Bearer ${token}`,
+                },
+            });
+    }, [authenticated, getAccessToken]);
+
     useEffect(() => {
         let isMounted = true;
 
         const loadData = async () => {
-            const [items, topics] = await Promise.all([
+            const authFetch = await createAuthFetch();
+            const [items, topics, pollsData] = await Promise.all([
                 fetchFeedItems(),
                 fetchTrendingTopics(),
+                fetchPolls(authFetch),
             ]);
 
             if (isMounted) {
                 setFeedItems(items);
                 setTrendingTopics(topics);
+                setPolls(pollsData);
                 setIsLoading(false);
             }
         };
@@ -41,7 +60,7 @@ export default function FeedPage() {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [createAuthFetch]);
 
     const typeStyles: Record<string, string> = {
         personal: 'bg-blue-400',
@@ -49,6 +68,30 @@ export default function FeedPage() {
         prompt: 'bg-emerald-300',
         celebrity: 'bg-purple-400',
     };
+
+    // Interleave polls with feed items (1 poll after every 3 items)
+    const interleavedContent = useMemo(() => {
+        const result: Array<{ type: 'feed'; item: FeedItem } | { type: 'poll'; item: Poll }> = [];
+        let pollIndex = 0;
+
+        for (let i = 0; i < feedItems.length; i++) {
+            result.push({ type: 'feed', item: feedItems[i] });
+
+            // Insert a poll after every 3 feed items
+            if ((i + 1) % 3 === 0 && pollIndex < polls.length) {
+                result.push({ type: 'poll', item: polls[pollIndex] });
+                pollIndex++;
+            }
+        }
+
+        // Add remaining polls at the end
+        while (pollIndex < polls.length) {
+            result.push({ type: 'poll', item: polls[pollIndex] });
+            pollIndex++;
+        }
+
+        return result;
+    }, [feedItems, polls]);
 
     return (
         <motion.div
@@ -115,46 +158,62 @@ export default function FeedPage() {
 
                 {/* Main Feed Stream */}
                 <div className="flex-1 max-w-2xl space-y-6 pb-20">
-                    {!isLoading && feedItems.length === 0 && (
+                    {!isLoading && interleavedContent.length === 0 && (
                         <div className="text-sm text-[var(--text-muted)] text-center">
                             No feed items yet.
                         </div>
                     )}
-                    {feedItems.map((post) => (
-                        <motion.div
-                            key={post.id}
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.5 }}
-                        >
-                            <div className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl p-6 hover:bg-[var(--bg-card-hover)] transition-colors">
-                                <div className="flex justify-between items-center mb-3">
-                                    <div className="flex items-center gap-2">
-                                        <div className={`w-2 h-2 rounded-full ${typeStyles[post.type] ?? 'bg-blue-400'}`} />
-                                        <span className="text-xs font-medium text-[var(--text-main)] uppercase tracking-wide">{post.type}</span>
+                    {interleavedContent.map((entry) => {
+                        if (entry.type === 'poll') {
+                            return (
+                                <motion.div
+                                    key={`poll-${entry.item.id}`}
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    transition={{ duration: 0.5 }}
+                                >
+                                    <PollCard poll={entry.item} />
+                                </motion.div>
+                            );
+                        }
+
+                        const post = entry.item;
+                        return (
+                            <motion.div
+                                key={post.id}
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.5 }}
+                            >
+                                <div className="bg-[var(--bg-card)] border border-[var(--border-color)] rounded-2xl p-6 hover:bg-[var(--bg-card-hover)] transition-colors">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full ${typeStyles[post.type] ?? 'bg-blue-400'}`} />
+                                            <span className="text-xs font-medium text-[var(--text-main)] uppercase tracking-wide">{post.type}</span>
+                                        </div>
+                                        <span className="text-xs text-[var(--text-muted)]">
+                                            {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : ''}
+                                        </span>
                                     </div>
-                                    <span className="text-xs text-[var(--text-muted)]">
-                                        {post.createdAt ? new Date(post.createdAt).toLocaleDateString() : ''}
-                                    </span>
+                                    <h3 className="font-serif text-lg text-[var(--text-main)] mb-2">{post.title}</h3>
+                                    <p className="font-sans text-sm text-[var(--text-muted)] leading-relaxed mb-4">
+                                        {post.body}
+                                    </p>
+                                    <div className="flex gap-4 border-t border-[var(--border-color)] pt-4">
+                                        <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--rose-300)] transition-colors">
+                                            <ThumbsUp size={14} />
+                                        </button>
+                                        <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">
+                                            <MessageSquare size={14} /> Comment
+                                        </button>
+                                        <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors ml-auto">
+                                            <Share2 size={14} />
+                                        </button>
+                                    </div>
                                 </div>
-                                <h3 className="font-serif text-lg text-[var(--text-main)] mb-2">{post.title}</h3>
-                                <p className="font-sans text-sm text-[var(--text-muted)] leading-relaxed mb-4">
-                                    {post.body}
-                                </p>
-                                <div className="flex gap-4 border-t border-[var(--border-color)] pt-4">
-                                    <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--rose-300)] transition-colors">
-                                        <ThumbsUp size={14} />
-                                    </button>
-                                    <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors">
-                                        <MessageSquare size={14} /> Comment
-                                    </button>
-                                    <button className="flex items-center gap-1.5 text-xs text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors ml-auto">
-                                        <Share2 size={14} />
-                                    </button>
-                                </div>
-                            </div>
-                        </motion.div>
-                    ))}
+                            </motion.div>
+                        );
+                    })}
                 </div>
 
                 {/* Right Sidebar (Trending) - Desktop Only */}

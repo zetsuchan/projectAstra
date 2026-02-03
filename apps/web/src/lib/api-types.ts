@@ -53,3 +53,31 @@ export type MarketsOverview = {
     positions: MarketPosition[];
     balanceCents: number | null;
 };
+
+// ============================================================================
+// POLLS
+// ============================================================================
+export type PollOption = {
+    id: string;
+    text: string;
+    voteCount: number;
+    percentage: number;
+};
+
+export type Poll = {
+    id: string;
+    question: string;
+    description?: string;
+    options: PollOption[];
+    astroTags?: string[];
+    totalVotes: number;
+    userVote?: string; // optionId if voted
+    showResults: boolean;
+    featured: boolean;
+    expiresAt?: string;
+    createdAt: string;
+};
+
+export type PollSignBreakdown = {
+    [sign: string]: { [optionId: string]: number };
+};

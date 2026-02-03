@@ -1,7 +1,7 @@
 import { config } from 'dotenv';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { feedItems, predictionMarkets } from './schema';
+import { feedItems, predictionMarkets, users, polls, pollOptions } from './schema';
 
 config({ path: '.env.local' });
 
@@ -215,6 +215,76 @@ async function seed() {
 
   await db.insert(predictionMarkets).values(marketData);
   console.log(`✅ Inserted ${marketData.length} prediction markets`);
+
+  // ============================================================================
+  // POLLS (require a user for createdBy)
+  // ============================================================================
+
+  // First, create a seed user for polls
+  await db.delete(pollOptions);
+  await db.delete(polls);
+  await db.delete(users);
+
+  const [seedUser] = await db.insert(users).values({
+    email: 'seed@astra.app',
+    isAdmin: true,
+    onboardingCompleted: true,
+  }).returning();
+
+  const pollData = [
+    {
+      question: 'Which retrograde hits you the hardest?',
+      description: 'We all have that one transit that wrecks us every time.',
+      astroTags: ['retrograde', 'transit'],
+      featured: true,
+      expiresAt: daysFromNow(7),
+      createdBy: seedUser.userId,
+      options: ['Mercury (communication chaos)', 'Venus (relationship drama)', 'Mars (anger issues)', 'Saturn (reality checks)'],
+    },
+    {
+      question: 'Your toxic trait based on your rising sign?',
+      description: null,
+      astroTags: ['rising', 'signs'],
+      featured: false,
+      expiresAt: daysFromNow(14),
+      createdBy: seedUser.userId,
+      options: ['Saying "I\'m fine" when I\'m not', 'Ghosting instead of confronting', 'Starting fights for fun', 'Overthinking everything'],
+    },
+    {
+      question: 'Best sign to date during Venus in Pisces?',
+      description: 'Venus enters Pisces soon. Who are you shooting your shot with?',
+      astroTags: ['venus', 'pisces', 'dating'],
+      featured: true,
+      expiresAt: daysFromNow(30),
+      createdBy: seedUser.userId,
+      options: ['Water signs (Cancer, Scorpio, Pisces)', 'Earth signs (Taurus, Virgo, Cap)', 'Fire signs (Aries, Leo, Sag)', 'Air signs (Gemini, Libra, Aqua)'],
+    },
+    {
+      question: 'Do you believe in astrology compatibility?',
+      description: 'Be honest.',
+      astroTags: ['compatibility', 'relationships'],
+      featured: false,
+      expiresAt: daysFromNow(21),
+      createdBy: seedUser.userId,
+      options: ['100% - charts don\'t lie', 'Somewhat - it\'s a guide', 'Not really - vibes matter more', 'No - it\'s just entertainment'],
+    },
+  ];
+
+  for (const poll of pollData) {
+    const { options, ...pollValues } = poll;
+    const [insertedPoll] = await db.insert(polls).values(pollValues).returning();
+
+    const optionValues = options.map((text, idx) => ({
+      pollId: insertedPoll.pollId,
+      text,
+      displayOrder: idx,
+      voteCount: Math.floor(Math.random() * 50) + 5, // Random initial votes for demo
+    }));
+
+    await db.insert(pollOptions).values(optionValues);
+  }
+
+  console.log(`✅ Inserted ${pollData.length} polls with options`);
 
   console.log('🌱 Seeding complete!');
   process.exit(0);

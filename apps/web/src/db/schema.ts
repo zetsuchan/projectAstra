@@ -12,6 +12,7 @@ import {
   integer,
   vector,
   real,
+  unique,
 } from 'drizzle-orm/pg-core';
 
 // ============================================================================
@@ -33,6 +34,8 @@ export const users = pgTable('users', {
   pointsBalance: integer('points_balance').default(0).notNull(),
   pointsUpdatedAt: timestamp('points_updated_at').defaultNow(),
   dailyBonusLastClaimedAt: timestamp('daily_bonus_last_claimed_at'),
+  // Admin flag for poll creation
+  isAdmin: boolean('is_admin').default(false).notNull(),
 });
 
 // ============================================================================
@@ -406,5 +409,69 @@ export const knowledgeBase = pgTable(
     index('knowledge_base_category_idx').on(table.category),
     index('knowledge_base_subcategory_idx').on(table.subcategory),
     // Note: HNSW index for vector search should be created via raw SQL migration
+  ]
+);
+
+// ============================================================================
+// POLLS
+// ============================================================================
+export const polls = pgTable(
+  'polls',
+  {
+    pollId: uuid('poll_id').primaryKey().defaultRandom(),
+    question: text('question').notNull(),
+    description: text('description'),
+    astroTags: jsonb('astro_tags').$type<string[]>(),
+    targetSigns: jsonb('target_signs').$type<string[]>(), // Filter: only these signs see poll
+    showResultsBeforeVote: boolean('show_results_before_vote').default(false),
+    featured: boolean('featured').default(false),
+    expiresAt: timestamp('expires_at'),
+    closedAt: timestamp('closed_at'),
+    createdBy: uuid('created_by').references(() => users.userId).notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('polls_created_idx').on(table.createdAt),
+    index('polls_expires_idx').on(table.expiresAt),
+  ]
+);
+
+// ============================================================================
+// POLL OPTIONS
+// ============================================================================
+export const pollOptions = pgTable(
+  'poll_options',
+  {
+    optionId: uuid('option_id').primaryKey().defaultRandom(),
+    pollId: uuid('poll_id').references(() => polls.pollId, { onDelete: 'cascade' }).notNull(),
+    text: text('text').notNull(),
+    displayOrder: integer('display_order').notNull().default(0),
+    voteCount: integer('vote_count').notNull().default(0), // Cached for performance
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('poll_options_poll_idx').on(table.pollId),
+  ]
+);
+
+// ============================================================================
+// POLL VOTES
+// ============================================================================
+export const pollVotes = pgTable(
+  'poll_votes',
+  {
+    voteId: uuid('vote_id').primaryKey().defaultRandom(),
+    pollId: uuid('poll_id').references(() => polls.pollId, { onDelete: 'cascade' }).notNull(),
+    optionId: uuid('option_id').references(() => pollOptions.optionId, { onDelete: 'cascade' }).notNull(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    voterSunSign: text('voter_sun_sign'),
+    voterMoonSign: text('voter_moon_sign'),
+    idempotencyKey: text('idempotency_key').unique(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('poll_votes_poll_idx').on(table.pollId),
+    index('poll_votes_user_idx').on(table.userId),
+    unique('poll_votes_user_poll_unique').on(table.pollId, table.userId),
   ]
 );

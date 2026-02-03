@@ -1,4 +1,4 @@
-import type { ChatMessage, ChatSendResponse, FeedItem, MarketsOverview, TrendingTopic } from './api-types';
+import type { ChatMessage, ChatSendResponse, FeedItem, MarketsOverview, TrendingTopic, Poll, PollSignBreakdown } from './api-types';
 import { DEFAULT_THREAD_ID } from './chat-constants';
 
 const JSON_HEADERS = {
@@ -83,5 +83,70 @@ export async function fetchMarketsOverview(): Promise<MarketsOverview> {
         };
     } catch {
         return fallback;
+    }
+}
+
+// ============================================================================
+// POLLS
+// ============================================================================
+
+export async function fetchPolls(fetcher: typeof fetch = fetch): Promise<Poll[]> {
+    try {
+        const res = await fetcher('/api/polls', { cache: 'no-store' });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data?.polls) ? data.polls : [];
+    } catch {
+        return [];
+    }
+}
+
+export async function fetchPoll(pollId: string, fetcher: typeof fetch = fetch): Promise<Poll | null> {
+    try {
+        const res = await fetcher(`/api/polls/${pollId}`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data?.poll ?? null;
+    } catch {
+        return null;
+    }
+}
+
+export async function votePoll(
+    pollId: string,
+    optionId: string,
+    idempotencyKey?: string,
+    fetcher: typeof fetch = fetch
+): Promise<{ success: boolean; error?: string; optionId?: string }> {
+    try {
+        const res = await fetcher(`/api/polls/${pollId}/vote`, {
+            method: 'POST',
+            headers: JSON_HEADERS,
+            body: JSON.stringify({ optionId, idempotencyKey }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+            return { success: false, error: data?.error ?? 'vote_failed' };
+        }
+
+        return { success: true, optionId: data?.optionId };
+    } catch {
+        return { success: false, error: 'network_error' };
+    }
+}
+
+export async function fetchPollSignBreakdown(
+    pollId: string,
+    fetcher: typeof fetch = fetch
+): Promise<PollSignBreakdown | null> {
+    try {
+        const res = await fetcher(`/api/polls/${pollId}/signs`, { cache: 'no-store' });
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data?.breakdown ?? null;
+    } catch {
+        return null;
     }
 }
