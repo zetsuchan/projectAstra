@@ -1,24 +1,18 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { ChevronLeft, Sun, Moon, Plus, BookOpen, Calendar, Sparkles } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ChevronLeft, Sun, Moon, Plus, BookOpen, Calendar, Sparkles, Trash2, X } from 'lucide-react';
 import Link from 'next/link';
 import { usePrivy } from '@privy-io/react-auth';
 import { OrbitVisual } from '@/components/ui/orbit-visual';
-
-interface DiaryEntry {
-    id: string;
-    title: string | null;
-    body: string;
-    mood: string | null;
-    moodTags: string[] | null;
-    aiReflection: string | null;
-    createdAt: string;
-}
+import { useAuthenticatedFetch } from '@/lib/auth';
+import { fetchDiaryEntries, createDiaryEntry, deleteDiaryEntry, fetchDiaryEntry } from '@/lib/api-client';
+import type { DiaryEntry } from '@/lib/api-types';
 
 export default function DiaryPage() {
     const { ready, authenticated, user, login, logout } = usePrivy();
+    const authFetch = useAuthenticatedFetch();
     const [theme, setTheme] = useState('dark');
     const toggleTheme = () => {
         setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -30,53 +24,74 @@ export default function DiaryPage() {
     const [showNewEntry, setShowNewEntry] = useState(false);
     const [newEntryBody, setNewEntryBody] = useState('');
     const [selectedMoods, setSelectedMoods] = useState<string[]>([]);
+    const [nextCursor, setNextCursor] = useState<string | null>(null);
+    const [isSaving, setIsSaving] = useState(false);
 
     const moodOptions = ['happy', 'anxious', 'calm', 'frustrated', 'hopeful', 'sad', 'energetic', 'confused'];
 
-    useEffect(() => {
-        // TODO: Fetch diary entries from API
+    const loadEntries = useCallback(async (cursor?: string) => {
+        if (!authenticated) {
+            setIsLoading(false);
+            return;
+        }
+
+        const result = await fetchDiaryEntries(cursor, 20, authFetch);
+        if (cursor) {
+            setEntries(prev => [...prev, ...result.entries]);
+        } else {
+            setEntries(result.entries);
+        }
+        setNextCursor(result.nextCursor);
         setIsLoading(false);
-        // Mock data for now
-        setEntries([
-            {
-                id: '1',
-                title: null,
-                body: 'Had a really intense conversation with Alex today. Mars square Venus is no joke.',
-                mood: 'anxious',
-                moodTags: ['anxious', 'hopeful'],
-                aiReflection: 'This transit often brings relationship tensions to the surface. Your awareness of it is half the battle.',
-                createdAt: new Date(Date.now() - 86400000).toISOString(),
-            },
-            {
-                id: '2',
-                title: 'New moon intentions',
-                body: 'Setting intentions for this lunar cycle: focus on my art, spend less time doomscrolling, actually text back.',
-                mood: 'hopeful',
-                moodTags: ['hopeful', 'calm'],
-                aiReflection: null,
-                createdAt: new Date(Date.now() - 86400000 * 3).toISOString(),
-            },
-        ]);
-    }, []);
+    }, [authenticated, authFetch]);
+
+    useEffect(() => {
+        loadEntries();
+    }, [loadEntries]);
 
     const handleSaveEntry = async () => {
-        if (!newEntryBody.trim()) return;
+        if (!newEntryBody.trim() || isSaving) return;
+        setIsSaving(true);
 
-        // TODO: POST to API
-        const newEntry: DiaryEntry = {
-            id: crypto.randomUUID(),
-            title: null,
-            body: newEntryBody,
-            mood: selectedMoods[0] || null,
-            moodTags: selectedMoods.length > 0 ? selectedMoods : null,
-            aiReflection: null,
-            createdAt: new Date().toISOString(),
-        };
+        const entry = await createDiaryEntry(
+            newEntryBody,
+            selectedMoods.length > 0 ? selectedMoods : undefined,
+            undefined,
+            authFetch,
+        );
 
-        setEntries(prev => [newEntry, ...prev]);
-        setNewEntryBody('');
-        setSelectedMoods([]);
-        setShowNewEntry(false);
+        if (entry) {
+            setEntries(prev => [entry, ...prev]);
+            setNewEntryBody('');
+            setSelectedMoods([]);
+            setShowNewEntry(false);
+
+            // Poll for AI reflection after a few seconds
+            pollForReflection(entry.id);
+        }
+
+        setIsSaving(false);
+    };
+
+    const pollForReflection = async (entryId: string) => {
+        // Check for AI reflection after 4s and 8s
+        for (const delay of [4000, 8000]) {
+            await new Promise(resolve => setTimeout(resolve, delay));
+            const updated = await fetchDiaryEntry(entryId, authFetch);
+            if (updated?.aiReflection) {
+                setEntries(prev =>
+                    prev.map(e => e.id === entryId ? { ...e, aiReflection: updated.aiReflection } : e)
+                );
+                return;
+            }
+        }
+    };
+
+    const handleDeleteEntry = async (entryId: string) => {
+        const ok = await deleteDiaryEntry(entryId, authFetch);
+        if (ok) {
+            setEntries(prev => prev.filter(e => e.id !== entryId));
+        }
     };
 
     const toggleMood = (mood: string) => {
@@ -155,77 +170,95 @@ export default function DiaryPage() {
             <div className="flex-1 relative z-10 overflow-y-auto p-4 md:p-8 pb-24 md:pb-8">
                 <div className="max-w-2xl mx-auto space-y-6">
 
+                    {/* Auth gate */}
+                    {!authenticated && !isLoading && (
+                        <div className="text-center py-12 text-[var(--text-muted)]">
+                            <BookOpen size={32} className="mx-auto mb-3 opacity-50" />
+                            <p className="mb-4">Sign in to start your cosmic journal</p>
+                            <button
+                                onClick={() => login()}
+                                className="px-6 py-2 rounded-full bg-[var(--text-main)] text-[var(--bg-main)] text-sm font-medium hover:scale-105 transition-transform"
+                            >
+                                Sign In
+                            </button>
+                        </div>
+                    )}
+
                     {/* New Entry Button / Form */}
-                    {!showNewEntry ? (
-                        <motion.button
-                            whileHover={{ scale: 1.01 }}
-                            whileTap={{ scale: 0.99 }}
-                            onClick={() => setShowNewEntry(true)}
-                            className="w-full p-6 rounded-2xl border border-dashed border-[var(--border-color)] bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] transition-colors flex items-center justify-center gap-3 text-[var(--text-muted)] hover:text-[var(--text-main)]"
-                        >
-                            <Plus size={20} />
-                            <span className="text-sm font-medium">New Entry</span>
-                        </motion.button>
-                    ) : (
-                        <motion.div
-                            initial={{ opacity: 0, y: -10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            className="p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-card)] space-y-4"
-                        >
-                            <textarea
-                                value={newEntryBody}
-                                onChange={(e) => setNewEntryBody(e.target.value)}
-                                placeholder="What's on your mind today?"
-                                className="w-full h-32 bg-transparent border-none focus:ring-0 text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none resize-none"
-                                autoFocus
-                            />
+                    {authenticated && (
+                        <>
+                            {!showNewEntry ? (
+                                <motion.button
+                                    whileHover={{ scale: 1.01 }}
+                                    whileTap={{ scale: 0.99 }}
+                                    onClick={() => setShowNewEntry(true)}
+                                    className="w-full p-6 rounded-2xl border border-dashed border-[var(--border-color)] bg-[var(--bg-card)]/50 hover:bg-[var(--bg-card)] transition-colors flex items-center justify-center gap-3 text-[var(--text-muted)] hover:text-[var(--text-main)]"
+                                >
+                                    <Plus size={20} />
+                                    <span className="text-sm font-medium">New Entry</span>
+                                </motion.button>
+                            ) : (
+                                <motion.div
+                                    initial={{ opacity: 0, y: -10 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="p-6 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-card)] space-y-4"
+                                >
+                                    <textarea
+                                        value={newEntryBody}
+                                        onChange={(e) => setNewEntryBody(e.target.value)}
+                                        placeholder="What's on your mind today?"
+                                        className="w-full h-32 bg-transparent border-none focus:ring-0 text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none resize-none"
+                                        autoFocus
+                                    />
 
-                            {/* Mood Tags */}
-                            <div className="space-y-2">
-                                <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">How are you feeling?</p>
-                                <div className="flex flex-wrap gap-2">
-                                    {moodOptions.map(mood => (
+                                    {/* Mood Tags */}
+                                    <div className="space-y-2">
+                                        <p className="text-xs text-[var(--text-muted)] uppercase tracking-wide">How are you feeling?</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {moodOptions.map(mood => (
+                                                <button
+                                                    key={mood}
+                                                    onClick={() => toggleMood(mood)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs transition-all ${
+                                                        selectedMoods.includes(mood)
+                                                            ? 'bg-[var(--rose-400)]/20 border border-[var(--rose-400)]/50 text-[var(--rose-300)]'
+                                                            : 'border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
+                                                    }`}
+                                                >
+                                                    {mood}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex justify-end gap-3 pt-2">
                                         <button
-                                            key={mood}
-                                            onClick={() => toggleMood(mood)}
-                                            className={`px-3 py-1.5 rounded-full text-xs transition-all ${
-                                                selectedMoods.includes(mood)
-                                                    ? 'bg-[var(--rose-400)]/20 border border-[var(--rose-400)]/50 text-[var(--rose-300)]'
-                                                    : 'border border-[var(--border-color)] text-[var(--text-muted)] hover:text-[var(--text-main)]'
-                                            }`}
+                                            onClick={() => {
+                                                setShowNewEntry(false);
+                                                setNewEntryBody('');
+                                                setSelectedMoods([]);
+                                            }}
+                                            className="px-4 py-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
                                         >
-                                            {mood}
+                                            Cancel
                                         </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end gap-3 pt-2">
-                                <button
-                                    onClick={() => {
-                                        setShowNewEntry(false);
-                                        setNewEntryBody('');
-                                        setSelectedMoods([]);
-                                    }}
-                                    className="px-4 py-2 text-sm text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
-                                >
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleSaveEntry}
-                                    disabled={!newEntryBody.trim()}
-                                    className="px-6 py-2 rounded-full bg-[var(--text-main)] text-[var(--bg-main)] text-sm font-medium hover:scale-105 transition-transform disabled:opacity-50 disabled:hover:scale-100"
-                                >
-                                    Save
-                                </button>
-                            </div>
-                        </motion.div>
+                                        <button
+                                            onClick={handleSaveEntry}
+                                            disabled={!newEntryBody.trim() || isSaving}
+                                            className="px-6 py-2 rounded-full bg-[var(--text-main)] text-[var(--bg-main)] text-sm font-medium hover:scale-105 transition-transform disabled:opacity-50 disabled:hover:scale-100"
+                                        >
+                                            {isSaving ? 'Saving...' : 'Save'}
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </>
                     )}
 
                     {/* Entries List */}
                     {isLoading ? (
                         <div className="text-center text-[var(--text-muted)] py-12">Loading entries...</div>
-                    ) : entries.length === 0 ? (
+                    ) : authenticated && entries.length === 0 ? (
                         <div className="text-center text-[var(--text-muted)] py-12">
                             <BookOpen size={32} className="mx-auto mb-3 opacity-50" />
                             <p>No entries yet. Start writing!</p>
@@ -238,25 +271,34 @@ export default function DiaryPage() {
                                     initial={{ opacity: 0, y: 10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: index * 0.05 }}
-                                    className="p-5 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
+                                    className="group p-5 rounded-2xl border border-[var(--border-color)] bg-[var(--bg-card)] hover:bg-[var(--bg-card-hover)] transition-colors"
                                 >
                                     <div className="flex items-start justify-between gap-4 mb-3">
                                         <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
                                             <Calendar size={12} />
                                             {formatDate(entry.createdAt)}
                                         </div>
-                                        {entry.moodTags && entry.moodTags.length > 0 && (
-                                            <div className="flex gap-1.5">
-                                                {entry.moodTags.slice(0, 2).map(tag => (
-                                                    <span
-                                                        key={tag}
-                                                        className="px-2 py-0.5 rounded-full text-[10px] bg-[var(--rose-400)]/10 text-[var(--rose-300)]"
-                                                    >
-                                                        {tag}
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
+                                        <div className="flex items-center gap-2">
+                                            {entry.moodTags && entry.moodTags.length > 0 && (
+                                                <div className="flex gap-1.5">
+                                                    {entry.moodTags.slice(0, 2).map(tag => (
+                                                        <span
+                                                            key={tag}
+                                                            className="px-2 py-0.5 rounded-full text-[10px] bg-[var(--rose-400)]/10 text-[var(--rose-300)]"
+                                                        >
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            <button
+                                                onClick={() => handleDeleteEntry(entry.id)}
+                                                className="opacity-0 group-hover:opacity-100 p-1.5 rounded-full hover:bg-red-500/20 text-[var(--text-muted)] hover:text-red-400 transition-all"
+                                                title="Delete entry"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {entry.title && (
@@ -280,6 +322,16 @@ export default function DiaryPage() {
                                     )}
                                 </motion.div>
                             ))}
+
+                            {/* Load more */}
+                            {nextCursor && (
+                                <button
+                                    onClick={() => loadEntries(nextCursor)}
+                                    className="w-full py-3 text-sm text-[var(--text-muted)] hover:text-[var(--text-main)] transition-colors"
+                                >
+                                    Load more entries
+                                </button>
+                            )}
                         </div>
                     )}
                 </div>

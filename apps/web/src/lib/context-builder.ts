@@ -65,7 +65,12 @@ export function formatUserContextForPrompt(context: UserContext): string {
     // Relationships section
     if (context.relationships.length > 0) {
         const relationshipLines = context.relationships.map((r) => {
-            const signInfo = r.sunSign ? ` (${r.sunSign})` : '';
+            const signs = [
+                r.sunSign ? `Sun: ${r.sunSign}` : null,
+                r.moonSign ? `Moon: ${r.moonSign}` : null,
+                r.risingSign ? `Rising: ${r.risingSign}` : null,
+            ].filter(Boolean).join(', ');
+            const signInfo = signs ? ` (${signs})` : '';
             return `- ${r.label}: ${r.personName}${signInfo} [${r.type}]`;
         });
         sections.push(`## User's Relationships\n${relationshipLines.join('\n')}`);

@@ -71,7 +71,7 @@ export type Poll = {
     options: PollOption[];
     astroTags?: string[];
     totalVotes: number;
-    userVote?: string; // optionId if voted
+    userVote?: string;
     showResults: boolean;
     featured: boolean;
     expiresAt?: string;
@@ -80,4 +80,62 @@ export type Poll = {
 
 export type PollSignBreakdown = {
     [sign: string]: { [optionId: string]: number };
+};
+
+// ============================================================================
+// DIARY
+// ============================================================================
+export type DiaryEntry = {
+    id: string;
+    title: string | null;
+    body: string;
+    mood: string | null;
+    moodTags: string[] | null;
+    aiReflection: string | null;
+    createdAt: string;
+    updatedAt: string | null;
+};
+
+// ============================================================================
+// RELATIONSHIPS
+// ============================================================================
+export type CompatibilitySnapshot = {
+    summary: string;
+    strengths: string[];
+    tensions: string[];
+    tip: string;
+    score: number;
+    generatedAt: string;
+    version: number;
+};
+
+export type Relationship = {
+    id: string;
+    personName: string;
+    label: string;
+    type: string;
+    sunSign: string | null;
+    moonSign: string | null;
+    risingSign: string | null;
+    compatibilitySnapshot: CompatibilitySnapshot | null;
+    lastReadAt: string | null;
+    createdAt: string;
+};
+
+// ============================================================================
+// TAROT
+// ============================================================================
+export type DrawnCard = {
+    cardId: string;
+    reversed: boolean;
+    position: string;
+};
+
+export type TarotPull = {
+    id: string;
+    spread: string;
+    cards: DrawnCard[];
+    interpretation: string | null;
+    context: string | null;
+    createdAt: string;
 };

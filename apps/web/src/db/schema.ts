@@ -62,13 +62,26 @@ export const relationships = pgTable(
   'relationships',
   {
     relationshipId: uuid('relationship_id').primaryKey().defaultRandom(),
-    userId: uuid('user_id').references(() => users.userId).notNull(),
+    userId: uuid('user_id').references(() => users.userId, { onDelete: 'cascade' }).notNull(),
     label: text('label').notNull(),
-    type: text('type').$type<'boyfriend' | 'best_friend' | 'situationship' | 'custom'>().notNull(),
+    type: text('type').$type<'boyfriend' | 'girlfriend' | 'partner' | 'ex' | 'family' | 'best_friend' | 'situationship' | 'custom'>().notNull(),
     personName: text('person_name').notNull(),
     chartId: uuid('chart_id').references(() => charts.chartId),
     sunSign: text('sun_sign'),
+    moonSign: text('moon_sign'),
+    risingSign: text('rising_sign'),
+    compatibilitySnapshot: jsonb('compatibility_snapshot').$type<{
+      summary: string;
+      strengths: string[];
+      tensions: string[];
+      tip: string;
+      score: number;
+      generatedAt: string;
+      version: number;
+    }>(),
+    lastReadAt: timestamp('last_read_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (table) => [index('relationships_user_id_idx').on(table.userId)]
 );
@@ -162,13 +175,20 @@ export const feedSaves = pgTable('feed_saves', {
 // ============================================================================
 // TAROT PULLS
 // ============================================================================
-export const tarotPulls = pgTable('tarot_pulls', {
-  pullId: uuid('pull_id').primaryKey().defaultRandom(),
-  userId: uuid('user_id').references(() => users.userId).notNull(),
-  cardId: text('card_id').notNull(),
-  interpretation: text('interpretation').notNull(),
-  createdAt: timestamp('created_at').defaultNow().notNull(),
-});
+export const tarotPulls = pgTable(
+  'tarot_pulls',
+  {
+    pullId: uuid('pull_id').primaryKey().defaultRandom(),
+    userId: uuid('user_id').references(() => users.userId).notNull(),
+    spread: text('spread').$type<'single' | 'three-card'>().default('single').notNull(),
+    cards: jsonb('cards').$type<Array<{ cardId: string; reversed: boolean; position: string }>>().notNull(),
+    interpretation: text('interpretation'),
+    context: text('context'),
+    reinterpretedAt: timestamp('reinterpreted_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [index('tarot_pulls_user_created_idx').on(table.userId, table.createdAt)]
+);
 
 // ============================================================================
 // PROMPTS
@@ -214,7 +234,9 @@ export const memories = pgTable(
   (table) => [
     index('memories_user_type_idx').on(table.userId, table.type),
     index('memories_user_created_idx').on(table.userId, table.createdAt),
-    // Note: HNSW index for vector search should be created via raw SQL migration
+    index('memories_embedding_hnsw_idx')
+      .using('hnsw', table.embedding.op('vector_cosine_ops'))
+      .with({ m: 16, ef_construction: 100 }),
   ]
 );
 
@@ -408,7 +430,9 @@ export const knowledgeBase = pgTable(
   (table) => [
     index('knowledge_base_category_idx').on(table.category),
     index('knowledge_base_subcategory_idx').on(table.subcategory),
-    // Note: HNSW index for vector search should be created via raw SQL migration
+    index('knowledge_base_embedding_hnsw_idx')
+      .using('hnsw', table.embedding.op('vector_cosine_ops'))
+      .with({ m: 16, ef_construction: 100 }),
   ]
 );
 

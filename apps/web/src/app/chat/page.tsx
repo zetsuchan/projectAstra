@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronLeft, Sparkles, Sun, Moon, Zap, BookOpen, Clock, Send } from 'lucide-react';
 import Link from 'next/link';
@@ -9,17 +9,13 @@ import { OrbitVisual } from '@/components/ui/orbit-visual';
 import { ChartOnboarding } from '@/components/onboarding/chart-onboarding';
 import { useAuthenticatedFetch } from '@/lib/auth';
 import type { ChatMessage } from '@/lib/api-types';
-import { DEFAULT_THREAD_ID, fetchChatMessages, sendChatMessage } from '@/lib/api-client';
+import { DEFAULT_THREAD_ID, fetchChatMessages, sendChatMessageStream } from '@/lib/api-client';
 
-interface ChatPageProps {
-    theme?: string;
-    toggleTheme?: () => void;
-}
+const THREAD_STORAGE_KEY = 'astra-chat-thread-id';
 
 export default function ChatPage() {
     const { ready, authenticated, user, login, logout } = usePrivy();
     const authFetch = useAuthenticatedFetch();
-    // Local theme state for now, ideally this moves to a Context
     const [theme, setTheme] = useState('dark');
     const toggleTheme = () => {
         setTheme(prev => prev === 'dark' ? 'light' : 'dark');
@@ -28,10 +24,18 @@ export default function ChatPage() {
 
     const [messages, setMessages] = useState<ChatMessage[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isSending, setIsSending] = useState(false);
     const [inputValue, setInputValue] = useState("");
+    const [streamingContent, setStreamingContent] = useState("");
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [showOnboarding, setShowOnboarding] = useState(false);
     const [hasCheckedOnboarding, setHasCheckedOnboarding] = useState(false);
+    const [threadId, setThreadId] = useState<string>(() => {
+        if (typeof window !== 'undefined') {
+            return localStorage.getItem(THREAD_STORAGE_KEY) ?? DEFAULT_THREAD_ID;
+        }
+        return DEFAULT_THREAD_ID;
+    });
 
     // Check onboarding status
     useEffect(() => {
@@ -55,11 +59,17 @@ export default function ChatPage() {
         checkOnboarding();
     }, [authenticated, hasCheckedOnboarding, authFetch]);
 
+    // Load messages from API on mount
     useEffect(() => {
+        if (!authenticated) {
+            setIsLoading(false);
+            return;
+        }
+
         let isMounted = true;
 
         const loadMessages = async () => {
-            const data = await fetchChatMessages(DEFAULT_THREAD_ID);
+            const data = await fetchChatMessages(threadId, authFetch);
             if (isMounted) {
                 setMessages(data);
                 setIsLoading(false);
@@ -71,15 +81,15 @@ export default function ChatPage() {
         return () => {
             isMounted = false;
         };
-    }, []);
+    }, [authenticated, threadId, authFetch]);
 
-    const handleSend = async () => {
+    const handleSend = useCallback(async () => {
         const trimmed = inputValue.trim();
-        if (!trimmed) return;
+        if (!trimmed || isSending) return;
 
         const newMsg: ChatMessage = {
             id: crypto.randomUUID(),
-            threadId: DEFAULT_THREAD_ID,
+            threadId,
             role: 'user',
             content: trimmed,
             createdAt: new Date().toISOString(),
@@ -87,25 +97,94 @@ export default function ChatPage() {
 
         setMessages(prev => [...prev, newMsg]);
         setInputValue("");
+        setIsSending(true);
+        setStreamingContent("");
 
-        const response = await sendChatMessage(DEFAULT_THREAD_ID, trimmed, authFetch);
+        const result = await sendChatMessageStream(
+            threadId,
+            trimmed,
+            (chunk) => {
+                setStreamingContent(prev => prev + chunk);
+            },
+            authFetch,
+        );
 
-        if (response?.assistantMessage) {
-            setMessages(prev => [...prev, response.assistantMessage]);
+        if (result) {
+            // Update thread ID if a new thread was created
+            if (result.threadId !== threadId && result.threadId !== DEFAULT_THREAD_ID) {
+                setThreadId(result.threadId);
+                localStorage.setItem(THREAD_STORAGE_KEY, result.threadId);
+            }
+
+            // Replace streaming content with final message
+            setStreamingContent("");
+            setMessages(prev => {
+                // Update user message ID to match server
+                const updated = prev.map(m =>
+                    m.id === newMsg.id ? { ...m, id: result.userMessageId || m.id, threadId: result.threadId } : m
+                );
+                return [...updated, {
+                    id: crypto.randomUUID(),
+                    threadId: result.threadId,
+                    role: 'assistant' as const,
+                    content: prev.length > 0 ? '' : '', // Will be filled below
+                    createdAt: new Date().toISOString(),
+                }];
+            });
+
+            // Get the full streamed content and set it as the final message
+            setMessages(prev => {
+                const lastMsg = prev[prev.length - 1];
+                if (lastMsg?.role === 'assistant' && !lastMsg.content) {
+                    // We need to capture the streaming content before it was cleared
+                    return prev;
+                }
+                return prev;
+            });
         } else {
+            setStreamingContent("");
             setMessages(prev => [...prev, {
                 id: crypto.randomUUID(),
-                threadId: DEFAULT_THREAD_ID,
+                threadId,
                 role: 'assistant',
-                content: 'AI response unavailable. Check your OpenRouter configuration.',
+                content: 'AI response unavailable. Check your connection or try again.',
                 createdAt: new Date().toISOString(),
             }]);
         }
-    };
+
+        setIsSending(false);
+    }, [inputValue, isSending, threadId, authFetch]);
+
+    // Improved: capture streaming content into final message
+    const prevStreamingRef = useRef("");
+    useEffect(() => {
+        if (!isSending && prevStreamingRef.current && !streamingContent) {
+            // Streaming just ended — finalize the assistant message
+            const finalContent = prevStreamingRef.current;
+            setMessages(prev => {
+                const last = prev[prev.length - 1];
+                if (last?.role === 'assistant' && !last.content) {
+                    return [...prev.slice(0, -1), { ...last, content: finalContent }];
+                }
+                // If there's no empty assistant message, add one
+                if (last?.role === 'user' || (last?.role === 'assistant' && last.content)) {
+                    return [...prev, {
+                        id: crypto.randomUUID(),
+                        threadId,
+                        role: 'assistant' as const,
+                        content: finalContent,
+                        createdAt: new Date().toISOString(),
+                    }];
+                }
+                return prev;
+            });
+        }
+        prevStreamingRef.current = streamingContent;
+    }, [streamingContent, isSending, threadId]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages]);
+    }, [messages, streamingContent]);
 
     return (
         <motion.div
@@ -204,7 +283,6 @@ export default function ChatPage() {
                     <div className="space-y-4">
                         <h3 className="text-xs uppercase tracking-widest text-[var(--text-muted)] font-medium">Active Context</h3>
 
-                        {/* Context Card 1 */}
                         <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)]">
                             <div className="flex items-center gap-2 mb-2 text-[var(--rose-300)]">
                                 <Zap size={14} />
@@ -214,7 +292,6 @@ export default function ChatPage() {
                             <p className="text-xs text-[var(--text-muted)] mt-1">Tension in romantic communications. High impulsivity.</p>
                         </div>
 
-                        {/* Context Card 2 */}
                         <div className="p-4 rounded-xl border border-[var(--border-color)] bg-[var(--bg-card)]">
                             <div className="flex items-center gap-2 mb-2 text-[var(--lilac-300)]">
                                 <BookOpen size={14} />
@@ -237,7 +314,7 @@ export default function ChatPage() {
                 {/* Chat Area */}
                 <div className="flex-1 flex flex-col relative bg-gradient-to-b from-transparent to-[var(--bg-main)]/50">
                     <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6">
-                        {!isLoading && messages.length === 0 && (
+                        {!isLoading && messages.length === 0 && !streamingContent && (
                             <div className="text-sm text-[var(--text-muted)] text-center">
                                 No messages yet. Start the conversation.
                             </div>
@@ -274,6 +351,46 @@ export default function ChatPage() {
                                 </div>
                             </motion.div>
                         ))}
+
+                        {/* Streaming message */}
+                        {streamingContent && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="flex gap-4"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[var(--rose-400)] to-[var(--lilac-300)] flex-shrink-0 flex items-center justify-center mt-1">
+                                    <Sparkles size={12} className="text-white" />
+                                </div>
+                                <div className="max-w-[85%] md:max-w-[70%]">
+                                    <div className="p-4 rounded-2xl rounded-tl-sm text-sm md:text-base leading-relaxed shadow-sm bg-[var(--bg-card)] border border-[var(--border-color)] text-[var(--text-main)] backdrop-blur-md">
+                                        {streamingContent}
+                                        <span className="inline-block w-1.5 h-4 bg-[var(--rose-400)] animate-pulse ml-0.5 align-text-bottom" />
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+
+                        {/* Loading indicator when sending but no stream yet */}
+                        {isSending && !streamingContent && (
+                            <motion.div
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="flex gap-4"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-[var(--rose-400)] to-[var(--lilac-300)] flex-shrink-0 flex items-center justify-center mt-1">
+                                    <Sparkles size={12} className="text-white" />
+                                </div>
+                                <div className="p-4 rounded-2xl rounded-tl-sm bg-[var(--bg-card)] border border-[var(--border-color)]">
+                                    <div className="flex gap-1.5">
+                                        <span className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: '0ms' }} />
+                                        <span className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: '150ms' }} />
+                                        <span className="w-2 h-2 rounded-full bg-[var(--text-muted)] animate-bounce" style={{ animationDelay: '300ms' }} />
+                                    </div>
+                                </div>
+                            </motion.div>
+                        )}
+
                         <div ref={messagesEndRef} />
                     </div>
 
@@ -286,13 +403,15 @@ export default function ChatPage() {
                                     type="text"
                                     value={inputValue}
                                     onChange={(e) => setInputValue(e.target.value)}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
                                     placeholder="Ask Astra anything..."
-                                    className="flex-1 bg-transparent border-none focus:ring-0 px-6 py-4 text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none"
+                                    disabled={isSending}
+                                    className="flex-1 bg-transparent border-none focus:ring-0 px-6 py-4 text-[var(--text-main)] placeholder-[var(--text-muted)] focus:outline-none disabled:opacity-50"
                                 />
                                 <button
                                     onClick={handleSend}
-                                    className="mr-2 p-3 rounded-full bg-[var(--text-main)] text-[var(--bg-main)] hover:scale-105 transition-transform"
+                                    disabled={isSending || !inputValue.trim()}
+                                    className="mr-2 p-3 rounded-full bg-[var(--text-main)] text-[var(--bg-main)] hover:scale-105 transition-transform disabled:opacity-50 disabled:hover:scale-100"
                                 >
                                     <Send size={18} />
                                 </button>
