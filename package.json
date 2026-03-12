@@ -15,5 +15,9 @@
   "workspaces": [
     "apps/*",
     "packages/*"
+  ],
+  "trustedDependencies": [
+    "@reown/appkit",
+    "unrs-resolver"
   ]
 }
